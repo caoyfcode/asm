@@ -1,8 +1,11 @@
 use std::io::BufRead;
 
+use lazy_static::lazy_static;
+use regex::Regex;
+
 use crate::common::Size;
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub(super) enum Token {
     // pseudo
     DotSection, DotGlobal, DotEqu,
@@ -47,23 +50,81 @@ pub(super) enum Token {
     Eol, Err(String)
 }
 
+lazy_static! {
+    static ref SIMPLE_PATTERNS: Vec<(Regex, Token)> = vec![
+        (Regex::new(r"^.section").unwrap(), Token::DotSection),
+        (Regex::new(r"^(.global|.globl)").unwrap(), Token::DotGlobal),
+    ];
+
+    static ref SYMBOL: Regex = Regex::new(r"^[a-zA-Z_.][a-zA-Z0-9_.]*").unwrap();
+}
+
+impl Token {
+
+    /// 从 str 开头匹配一个文法符号,
+    /// 返回匹配到的符号与符号的下一个字符位置
+    fn matching(str: &str) -> (Token, usize) {
+        let len = str.len();
+        let str = str.trim_start();
+        let trim_len = len - str.len();
+
+        for (reg, token) in &*SIMPLE_PATTERNS {
+            if let Some(m) = reg.find(str) {
+                return (token.clone(), trim_len + m.end())
+            }
+        }
+
+        if let Some(m) = SYMBOL.find(str) {
+            return (Token::Symbol(String::from(m.as_str())), trim_len + m.end());
+        }
+
+        return (Token::Err(String::from(str)), trim_len);
+    }
+}
+
 pub(super) struct Scanner<R: BufRead> {
     reader: R,
+    buffer: String,  // 缓存一行
+    cursor: usize,  // 指示分析到 buffer 的位置
+    started: bool,  // 是否已经开始分析
 }
 
 impl<R: BufRead> Scanner<R> {
+
     pub(super) fn new(reader: R) -> Self {
         Self {
             reader,
+            buffer: String::new(),
+            cursor: 0,
+            started: false,
         }
     }
+
 }
 
 impl<R: BufRead> Iterator for Scanner<R> {
     type Item = Token;
 
     fn next(&mut self) -> Option<Self::Item> {
-        todo!()
+        while self.cursor >= self.buffer.len() {
+            self.buffer.clear();
+            self.cursor = 0;
+            let size = self.reader.read_line(&mut self.buffer).unwrap();
+            if self.buffer.ends_with("\n") {
+                self.buffer.pop();
+            }
+            if size == 0 {
+                return None;
+            } else if self.started {
+                return Some(Token::Eol);
+            } else {
+                self.started = true;
+            }
+        }
+        let str = &self.buffer[self.cursor..];
+        let (token, size) = Token::matching(str);
+        self.cursor += size;
+        Some(token)
     }
 }
 
