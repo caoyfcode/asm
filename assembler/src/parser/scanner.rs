@@ -7,46 +7,21 @@ use crate::common::Size;
 
 #[derive(Debug, PartialEq, Clone)]
 pub(super) enum Token {
-    // pseudo
+    // 伪指令
     DotSection, DotGlobal, DotEqu,
     DotFill, DotByte, DotWord, DotLong, DotAscii, DotAsciz,
     DotComm, DotLcomm,
-    // mnemonic 0op
-    IPusha, IPushad, IPushf, IPushfd,
-    IPopa, IPopad, IPopf, IPopfd,
-    IRet,
-    // mnemonic 1op
-    IInt, IDec, IInc,
-    IMul(Option<Size>), IDiv(Option<Size>),
-    // mnemonic 2op
-    IMov(Option<Size>), ICmp(Option<Size>),
-    IAdd(Option<Size>), ISub(Option<Size>),
-    IAnd(Option<Size>), IOr(Option<Size>),
-    IXor(Option<Size>), ITest(Option<Size>), ILea(Option<Size>),
-    // mnemonic jump
-    IJmp, ICall,
-    IJa, IJae, IJb, IJbe, IJc, IJe,
-    IJna, IJnae, IJnb, IJnbe, IJnc, IJne,
-    // registers
-    RegEax, RegAx, RegAh, RegAl,
-    RegEbx, RegBx, RegBh, RegBl,
-    RegEcx, RegCx, RegCh, RegCl,
-    RegEdx, RegDx, RegDh, RegDl,
-    RegEbp, RegBp,
-    RegEsi, RegSi,
-    RegEdi, RegDi,
-    RegEsp, RegSp,
-    RegEflags, RegFlags,
-    RegEip, RegIp,
-    RegCs, RegDs, RegEs, RegSs, RegFs, RegGs,
+    // 指令与寄存器
+    Mnemonic(String, Option<Size>),  // String 储存不带后缀的助记符(小写)
+    Register(String), // String 储存不带 % 的寄存器名(小写)
     // 操作符
     Lparen, Rparen, Colon, Comma, Dollar, Star,
-    // data
+    // 数据
     Integer(u32),
     String(String),
-    // identifier
+    // 标识符
     Symbol(String),
-    // comment
+    // 注释
     Comment,
     // 特殊符号
     Eol, Err(String)
@@ -61,40 +36,100 @@ macro_rules! regex_token_vec {
 }
 
 lazy_static! {
-    static ref SIMPLE_PATTERNS: Vec<(Regex, Token)> = regex_token_vec! [
-        // pseudo
-        r"^\.section" => Token::DotSection,
-        r"^\.(global|globl)" => Token::DotGlobal,
-        r"^\.(equ|set)" => Token::DotEqu,
-        r"^\.fill" => Token::DotFill,
-        r"^\.byte" => Token::DotByte,
-        r"^\.(word|short)" => Token::DotWord,
-        r"^\.(long|int)" => Token::DotLong,
-        r"^\.ascii" => Token::DotAscii,
-        r"^\.(asciz|string)" => Token::DotAsciz,
-        r"^\.comm" => Token::DotComm,
-        r"^\.lcomm" => Token::DotLcomm,
-        // instructions
-        // registers
-        // 操作符
+    static ref PSEUDOS: Vec<(Regex, Token)> = regex_token_vec![
+        r"^\.section\b" => Token::DotSection,
+        r"^\.(global|globl)\b" => Token::DotGlobal,
+        r"^\.(equ|set)\b" => Token::DotEqu,
+        r"^\.fill\b" => Token::DotFill,
+        r"^\.byte\b" => Token::DotByte,
+        r"^\.(word|short)\b" => Token::DotWord,
+        r"^\.(long|int)\b" => Token::DotLong,
+        r"^\.ascii\b" => Token::DotAscii,
+        r"^\.(asciz|string)\b" => Token::DotAsciz,
+        r"^\.comm\b" => Token::DotComm,
+        r"^\.lcomm\b" => Token::DotLcomm,
         r"^\(" => Token::Lparen, r"^\)" => Token::Rparen,
-        r"^:" => Token::Colon, r"^," => Token::Comma,
+        "^:" => Token::Colon, "^," => Token::Comma,
         r"^\$" => Token::Dollar, r"^\*" => Token::Star,
-        r"^(#|;|//).*$" => Token::Comment,
+        "^(#|;|//).*$" => Token::Comment,
     ];
 
+    static ref MNEMONIC_SIMPLE: Regex = Regex::new(
+        r"(?x) # ignore whitespace and allow line comments
+        ^(?P<mnemonic>
+            pusha|pushad|pushf|pushfd|popa|popad|popf|popfd|ret|
+            int|dec|inc|jmp|call|
+            ja|jae|jb|jbe|je|jna|jnae|jnb|jnbe|jne
+        )\b"
+    ).unwrap();
+
+    static ref MNEMONIC_WITH_SIZE: Regex = Regex::new(
+        r"(?x)
+        ^(?P<mnemonic>
+            push|pop|mul|div|mov|cmp|add|sub|and|or|xor|test|lea
+        )(?P<size>[bwl]?)\b"
+    ).unwrap();
+
+    static ref REGISTER: Regex = Regex::new(
+        r"(?x)
+        ^%(?P<name>
+        eax|ax|ah|al|ebx|bx|bh|bl|
+        ecx|cx|ch|cl|edx|dx|dh|dl|
+        esi|si|edi|di|eflags|flags|eip|ip|
+        cs|ds|es|fs|gs|ss)"
+    ).unwrap();
+
     static ref INTEGER: Regex = Regex::new(
-        r"(?P<bin>^0b[01]+)|(?P<hex>^0x[0-9a-f]+)|(?P<dec>^[1-9][0-9]*)|(?P<oct>^0[0-7]*)|(?P<char>^'[ -~]')"
+        "(?P<bin>^0b[01]+)|(?P<hex>^0x[0-9a-f]+)|(?P<dec>^[1-9][0-9]*)|(?P<oct>^0[0-7]*)|(?P<char>^'[ -~]')"
     ).unwrap();
 
     static ref STRING: Regex = Regex::new(
         r#"^"[ -~]*""#
     ).unwrap();
 
-    static ref SYMBOL: Regex = Regex::new(r"^[a-zA-Z_.][a-zA-Z0-9_.]*").unwrap();
+    static ref SYMBOL: Regex = Regex::new(
+        "^[a-zA-Z_.][a-zA-Z0-9_.]*"
+    ).unwrap();
 }
 
 impl Token {
+
+    fn match_integer(str: &str) -> Option<(Token, usize)> {
+        if let Some(cap) = INTEGER.captures(str) {
+            if let Some(bin) = cap.name("bin") {
+                let end = bin.end();
+                return match u32::from_str_radix(&str[2..end], 2) {
+                    Ok(integer) => Some((Token::Integer(integer), end)),
+                    Err(err) => Some((Token::Err(err.to_string() + ": " + bin.as_str()), 0)), // 有可能过大无法转换
+                };
+            }
+            if let Some(oct) = cap.name("oct") {
+                let end = oct.end();
+                return match u32::from_str_radix(&str[0..end], 8) { // 0 被归到 8 进制
+                    Ok(integer) => Some((Token::Integer(integer), end)),
+                    Err(err) => Some((Token::Err(err.to_string() + ": " + oct.as_str()), 0)),
+                };
+            }
+            if let Some(hex) = cap.name("hex") {
+                let end = hex.end();
+                return match u32::from_str_radix(&str[2..end], 16) {
+                    Ok(integer) => Some((Token::Integer(integer), end)),
+                    Err(err) => Some((Token::Err(err.to_string() + ": " + hex.as_str()), 0)),
+                };
+            }
+            if let Some(dec) = cap.name("dec") {
+                let end = dec.end();
+                return match u32::from_str_radix(&str[0..end], 10) {
+                    Ok(integer) => Some((Token::Integer(integer), end)),
+                    Err(err) => Some((Token::Err(err.to_string() + ": " + dec.as_str()), 0)),
+                };
+            }
+            if let Some(_) = cap.name("char") {
+                return Some((Token::Integer(str.bytes().nth(1).unwrap() as u32), 3));
+            }
+        }
+        None
+    }
 
     /// 从 str 开头匹配一个非特殊符号的文法符号,
     /// 返回匹配到的符号与符号的下一个字符位置
@@ -102,46 +137,46 @@ impl Token {
         let len = str.len();
         let str = str.trim_start();
         let trim_len = len - str.len();
-        // simple patterns
-        for (reg, token) in &*SIMPLE_PATTERNS {
+        // pseudos
+        for (reg, token) in &*PSEUDOS {
             if let Some(m) = reg.find(str) {
                 return (token.clone(), trim_len + m.end());
             }
         }
+        // simple instruction
+        if let Some(cap) = MNEMONIC_SIMPLE.captures(str) {
+            let end = cap.get(0).unwrap().end();
+            return (
+                Token::Mnemonic(String::from(cap.name("mnemonic").unwrap().as_str()), None),
+                trim_len + end
+            );
+        }
+        // instructions with size
+        if let Some(cap) = MNEMONIC_WITH_SIZE.captures(str) {
+            let end = cap.get(0).unwrap().end();
+            let mnemonic = cap.name("mnemonic").unwrap().as_str();
+            let size = match cap.name("size").unwrap().as_str() {
+                "b" => Some(Size::Byte),
+                "w" => Some(Size::Word),
+                "l" => Some(Size::DoubleWord),
+                _ => None,
+            };
+            return (
+                Token::Mnemonic(String::from(mnemonic), size),
+                trim_len + end
+            );
+        }
+        // registers
+        if let Some(cap) = REGISTER.captures(str) {
+            let end = cap.get(0).unwrap().end();
+            return (
+                Token::Register(String::from(cap.name("name").unwrap().as_str())),
+                trim_len + end
+            );
+        }
         // integer
-        if let Some(cap) = INTEGER.captures(str) {
-            if let Some(bin) = cap.name("bin") {
-                let end = bin.end();
-                return match u32::from_str_radix(&str[2..end], 2) {
-                    Ok(integer) => (Token::Integer(integer), trim_len + end),
-                    Err(err) => (Token::Err(err.to_string()), trim_len),
-                };
-            }
-            if let Some(oct) = cap.name("oct") {
-                let end = oct.end();
-                return match u32::from_str_radix(&str[0..end], 8) { // 0 被归到 8 进制
-                    Ok(integer) => (Token::Integer(integer), trim_len + end),
-                    Err(err) => (Token::Err(err.to_string()), trim_len),
-                };
-            }
-            if let Some(hex) = cap.name("hex") {
-                println!("hex: {}", hex.as_str());
-                let end = hex.end();
-                return match u32::from_str_radix(&str[2..end], 16) {
-                    Ok(integer) => (Token::Integer(integer), trim_len + end),
-                    Err(err) => (Token::Err(err.to_string()), trim_len),
-                };
-            }
-            if let Some(dec) = cap.name("dec") {
-                let end = dec.end();
-                return match u32::from_str_radix(&str[0..end], 10) {
-                    Ok(integer) => (Token::Integer(integer), trim_len + end),
-                    Err(err) => (Token::Err(err.to_string()), trim_len),
-                };
-            }
-            if let Some(_) = cap.name("char") {
-                return (Token::Integer(str.bytes().nth(1).unwrap() as u32), trim_len + 3);
-            }
+        if let Some((token, size)) = Self::match_integer(str) {
+            return (token, trim_len + size);
         }
         // string
         if let Some(m) = STRING.find(str) {
@@ -153,7 +188,7 @@ impl Token {
             return (Token::Symbol(String::from(m.as_str())), trim_len + m.end());
         }
         // err
-        (Token::Err(String::from("unknown symbol")), trim_len)
+        (Token::Err(String::from("unknown symbol: ") + str), trim_len)
     }
 }
 
@@ -208,8 +243,10 @@ impl<R: BufRead> Iterator for Scanner<R> {
 }
 
 #[cfg(test)]
-mod pseudo_tests {
+mod tests {
     use std::io::Cursor;
+
+    use crate::common::Size;
 
     use super::{Scanner, Token};
 
@@ -222,7 +259,6 @@ mod pseudo_tests {
         }
         assert_eq!(scanner.next(), None);
     }
-
 
     #[test]
     fn test_section_symbol() {
@@ -339,13 +375,13 @@ mod pseudo_tests {
     #[test]
     fn test_comment() {
         use Token::*;
-        let str = r".byte 20, 22 # a byte
+        let str = r".byte 20, 22, 'h' # a byte
                         .word 300 # a word
                         .short 300 ; a word
                         .long 70000 // a long (double word)
                         .int 70000";
         let tokens = vec![
-            DotByte, Integer(20), Comma, Integer(22), Eol,
+            DotByte, Integer(20), Comma, Integer(22), Comma, Integer('h' as u32), Eol,
             DotWord, Integer(300), Eol,
             DotWord, Integer(300), Eol,
             DotLong, Integer(70000), Eol,
@@ -381,6 +417,39 @@ mod pseudo_tests {
             Token::DotLcomm, Token::Symbol(String::from("buffer")), Token::Comma, Token::Integer(16),
         ];
         test_str(str, tokens);
+    }
+
+    #[test]
+    fn test_simple_instruction() {
+        test_str(
+            "main:\npusha\npushf\nint $0x80\njmp *0x1234",
+            vec![
+                Token::Symbol(String::from("main")), Token::Colon, Token::Eol,
+                Token::Mnemonic(String::from("pusha"), None), Token::Eol,
+                Token::Mnemonic(String::from("pushf"), None), Token::Eol,
+                Token::Mnemonic(String::from("int"), None), Token::Dollar,
+                Token::Integer(0x80), Token::Eol,
+                Token::Mnemonic(String::from("jmp"), None), Token::Star,
+                Token::Integer(0x1234)
+            ]
+        );
+    }
+
+    #[test]
+    fn test_instruction_with_size() {
+        test_str(
+            "pushb $0x10\npush %eax\nmovl %ebx, %cs:0x01(%eax, %ebx, 2)",
+            vec![
+                Token::Mnemonic(String::from("push"), Some(Size::Byte)), Token::Dollar, Token::Integer(0x10), Token::Eol,
+                Token::Mnemonic(String::from("push"), None), Token::Register(String::from("eax")), Token::Eol,
+                Token::Mnemonic(String::from("mov"), Some(Size::DoubleWord)),
+                Token::Register(String::from("ebx")),Token::Comma,
+                Token::Register(String::from("cs")), Token::Colon, Token::Integer(0x01),
+                Token::Lparen, Token::Register(String::from("eax")), Token::Comma,
+                Token::Register(String::from("ebx")), Token::Comma, Token::Integer(2),
+                Token::Rparen
+            ]
+        );
     }
 
 }
