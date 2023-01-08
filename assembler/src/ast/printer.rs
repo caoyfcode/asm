@@ -118,13 +118,9 @@ impl Visitor for AstPrinter {
             true => "local",
             false => "none-local",
         };
-        writeln!(self.buf, "{} comm", is_local).unwrap();
-        self.inc_depth();
-        self.write_indent();
-        writeln!(self.buf, "length").unwrap();
+        writeln!(self.buf, "{} comm: {}", is_local, node.symbol).unwrap();
         self.inc_depth();
         node.length.accept(self);
-        self.dec_depth();
         self.dec_depth();
     }
 
@@ -159,14 +155,6 @@ impl Visitor for AstPrinter {
     fn visit_register(&mut self, node: &RegisterNode) {
         self.write_indent();
         writeln!(self.buf, "register: {}", node.name).unwrap();
-    }
-
-    fn visit_imm(&mut self, node: &ImmNode) {
-        self.write_indent();
-        match node {
-            ImmNode::Integer(n) => writeln!(self.buf, "imm: {}", n).unwrap(),
-            ImmNode::Symbol(n) => writeln!(self.buf, "imm: {}", n).unwrap(),
-        }
     }
 
     fn visit_mem(&mut self, node: &MemNode) {
@@ -241,7 +229,7 @@ mod tests {
                                             1
                                         )),
                                         offset: Some(
-                                            ImmNode::Integer(4)
+                                            ValueNode::Integer(4)
                                         )
                                     }
                                 )
@@ -262,13 +250,11 @@ mod tests {
                     ProgramItem::Pseudo(
                         PseudoNode::Section(PseudoSectionNode {symbol: String::from(".bss")})
                     ),
-                    ProgramItem::Label(
-                        LabelNode { label: String::from("buf") }
-                    ),
                     ProgramItem::Pseudo(
                         PseudoNode::Comm(
                             PseudoCommNode {
                                 is_local: true,
+                                symbol: String::from("buf"),
                                 length: ValueNode::Integer(8)
                             }
                         )

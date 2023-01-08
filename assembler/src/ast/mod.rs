@@ -20,7 +20,6 @@ pub trait Visitor {
     fn visit_instruction(&mut self, node: &InstructionNode);
     fn visit_operand(&mut self, node: &OperandNode);
     fn visit_register(&mut self, node: &RegisterNode);
-    fn visit_imm(&mut self, node: &ImmNode);
     fn visit_mem(&mut self, node: &MemNode);
     fn visit_label(&mut self, node: &LabelNode);
 }
@@ -97,6 +96,7 @@ pub struct PseudoStringNode {
 
 pub struct PseudoCommNode {
     pub is_local: bool,
+    pub symbol: String,
     pub length: ValueNode,
 }
 
@@ -108,7 +108,7 @@ pub struct InstructionNode {
 
 pub enum OperandNode {
     Register(RegisterNode),
-    Immediate(ImmNode),
+    Immediate(ValueNode),
     Memory(MemNode),
 }
 
@@ -116,15 +116,10 @@ pub struct RegisterNode {
     name: String,
 }
 
-pub enum ImmNode {
-    Integer(u32),
-    Symbol(String),
-}
-
 pub struct MemNode {
     base: Option<RegisterNode>, // 基址寄存器
     index_scale: Option<(RegisterNode, u32)>, // 变址寄存器, scale 必须为 1, 2, 4, 8
-    offset: Option<ImmNode>, // 立即数偏移
+    offset: Option<ValueNode>, // 立即数偏移
 }
 
 pub struct LabelNode {
@@ -206,12 +201,6 @@ impl Node for OperandNode {
 impl Node for RegisterNode {
     fn accept<V: Visitor>(&self, visitor: &mut V) {
         visitor.visit_register(self);
-    }
-}
-
-impl Node for ImmNode {
-    fn accept<V: Visitor>(&self, visitor: &mut V) {
-        visitor.visit_imm(self);
     }
 }
 
