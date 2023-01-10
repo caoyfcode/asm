@@ -2,7 +2,7 @@ use std::fmt::Write;
 
 use super::*;
 
-struct AstPrinter {
+pub struct AstPrinter {
     depth: usize, // 缩进层数
     buf: String,
 }
@@ -37,26 +37,16 @@ impl Visitor for AstPrinter {
         self.inc_depth();
         for item in &node.items {
             match item {
-                ProgramItem::Pseudo(node) => node.accept(self),
+                ProgramItem::PseudoSection(node) => node.accept(self),
+                ProgramItem::PseudoGlobal(node) => node.accept(self),
+                ProgramItem::PseudoEqu(node) => node.accept(self),
+                ProgramItem::PseudoFill(node) => node.accept(self),
+                ProgramItem::PseudoInteger(node) => node.accept(self),
+                ProgramItem::PseudoString(node) => node.accept(self),
+                ProgramItem::PseudoComm(node) => node.accept(self),
                 ProgramItem::Instruction(node) => node.accept(self),
                 ProgramItem::Label(node) => node.accept(self),
             }
-        }
-        self.dec_depth();
-    }
-
-    fn visit_pseudo(&mut self, node: &PseudoNode) {
-        self.write_indent();
-        writeln!(self.buf, "pseudo").unwrap();
-        self.inc_depth();
-        match node {
-            PseudoNode::Section(n) => n.accept(self),
-            PseudoNode::Global(n) => n.accept(self),
-            PseudoNode::Equ(n) => n.accept(self),
-            PseudoNode::Fill(n) => n.accept(self),
-            PseudoNode::Integer(n) => n.accept(self),
-            PseudoNode::String(n) => n.accept(self),
-            PseudoNode::Comm(n) => n.accept(self),
         }
         self.dec_depth();
     }
@@ -202,66 +192,60 @@ mod tests {
     use super::*;
     #[test]
     fn test() {
-        let program = Box::new(
-            ProgramNode {
-                items: vec![
-                    ProgramItem::Pseudo(
-                        PseudoNode::Section(PseudoSectionNode {symbol: String::from(".text")})
-                    ),
-                    ProgramItem::Label(
-                        LabelNode { label: String::from("main") }
-                    ),
-                    ProgramItem::Instruction(
-                        InstructionNode {
-                            mnemonic: String::from("mov"),
-                            operand_size: Some(Size::DoubleWord),
-                            oprands: vec![
-                                OperandNode::Register(
-                                    RegisterNode { name: String::from("ecx") }
-                                ),
-                                OperandNode::Memory(
-                                    MemNode {
-                                        base: Some(
-                                            RegisterNode { name: String::from("eax") }
-                                        ),
-                                        index_scale: Some((
-                                            RegisterNode {name: String::from("ebx")},
-                                            1
-                                        )),
-                                        offset: Some(
-                                            ValueNode::Integer(4)
-                                        )
-                                    }
-                                )
-                            ]
-                        }
-                    ),
-                    ProgramItem::Pseudo(
-                        PseudoNode::Section(PseudoSectionNode {symbol: String::from(".data")})
-                    ),
-                    ProgramItem::Label(
-                        LabelNode { label: String::from("hello") }
-                    ),
-                    ProgramItem::Pseudo(
-                        PseudoNode::String(
-                            PseudoStringNode { zero_end: true, content: String::from("Hello, World!") }
-                        )
-                    ),
-                    ProgramItem::Pseudo(
-                        PseudoNode::Section(PseudoSectionNode {symbol: String::from(".bss")})
-                    ),
-                    ProgramItem::Pseudo(
-                        PseudoNode::Comm(
-                            PseudoCommNode {
-                                is_local: true,
-                                symbol: String::from("buf"),
-                                length: ValueNode::Integer(8)
-                            }
-                        )
-                    )
-                ]
-            }
-        );
+        let program = ProgramNode {
+            items: vec![
+                ProgramItem::PseudoSection(
+                    PseudoSectionNode {symbol: String::from(".text")}
+                ),
+                ProgramItem::Label(
+                    LabelNode { label: String::from("main") }
+                ),
+                ProgramItem::Instruction(
+                    InstructionNode {
+                        mnemonic: String::from("mov"),
+                        operand_size: Some(Size::DoubleWord),
+                        oprands: vec![
+                            OperandNode::Register(
+                                RegisterNode { name: String::from("ecx") }
+                            ),
+                            OperandNode::Memory(
+                                MemNode {
+                                    base: Some(
+                                        RegisterNode { name: String::from("eax") }
+                                    ),
+                                    index_scale: Some((
+                                        RegisterNode {name: String::from("ebx")},
+                                        1
+                                    )),
+                                    offset: Some(
+                                        ValueNode::Integer(4)
+                                    )
+                                }
+                            )
+                        ]
+                    }
+                ),
+                ProgramItem::PseudoSection(
+                    PseudoSectionNode {symbol: String::from(".data")}
+                ),
+                ProgramItem::Label(
+                    LabelNode { label: String::from("hello") }
+                ),
+                ProgramItem::PseudoString(
+                    PseudoStringNode { zero_end: true, content: String::from("Hello, World!") }
+                ),
+                ProgramItem::PseudoSection(
+                    PseudoSectionNode {symbol: String::from(".bss")}
+                ),
+                ProgramItem::PseudoComm(
+                    PseudoCommNode {
+                        is_local: true,
+                        symbol: String::from("buf"),
+                        length: ValueNode::Integer(8)
+                    }
+                )
+            ]
+        };
         let ast = Ast::new(program);
         let mut visitor = AstPrinter::new();
         ast.run_visitor(&mut visitor);

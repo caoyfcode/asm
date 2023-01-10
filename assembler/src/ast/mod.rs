@@ -1,4 +1,4 @@
-mod printer;
+pub mod printer;
 
 use crate::common::Size;
 
@@ -8,7 +8,6 @@ pub trait Node {
 
 pub trait Visitor {
     fn visit_program(&mut self, node: &ProgramNode);
-    fn visit_pseudo(&mut self, node: &PseudoNode);
     fn visit_pseudo_section(&mut self, node: &PseudoSectionNode);
     fn visit_pseudo_global(&mut self, node: &PseudoGlobalNode);
     fn visit_pseudo_equ(&mut self, node: &PseudoEquNode);
@@ -25,11 +24,11 @@ pub trait Visitor {
 }
 
 pub struct Ast {
-    program: Box<ProgramNode>,
+    program: ProgramNode,
 }
 
 impl Ast {
-    pub fn new(program: Box<ProgramNode>) -> Self {
+    pub fn new(program: ProgramNode) -> Self {
         Self {
             program,
         }
@@ -45,19 +44,15 @@ pub struct ProgramNode {
 }
 
 pub enum ProgramItem {
-    Pseudo(PseudoNode),
+    PseudoSection(PseudoSectionNode),
+    PseudoGlobal(PseudoGlobalNode),
+    PseudoEqu(PseudoEquNode),
+    PseudoFill(PseudoFillNode),
+    PseudoInteger(PseudoIntegerNode),
+    PseudoString(PseudoStringNode),
+    PseudoComm(PseudoCommNode),
     Instruction(InstructionNode),
     Label(LabelNode),
-}
-
-pub enum PseudoNode {
-    Section(PseudoSectionNode),
-    Global(PseudoGlobalNode),
-    Equ(PseudoEquNode),
-    Fill(PseudoFillNode),
-    Integer(PseudoIntegerNode),
-    String(PseudoStringNode),
-    Comm(PseudoCommNode),
 }
 
 pub struct PseudoSectionNode {
@@ -113,28 +108,22 @@ pub enum OperandNode {
 }
 
 pub struct RegisterNode {
-    name: String,
+    pub name: String,
 }
 
 pub struct MemNode {
-    base: Option<RegisterNode>, // 基址寄存器
-    index_scale: Option<(RegisterNode, u32)>, // 变址寄存器, scale 必须为 1, 2, 4, 8
-    offset: Option<ValueNode>, // 立即数偏移
+    pub base: Option<RegisterNode>, // 基址寄存器
+    pub index_scale: Option<(RegisterNode, u32)>, // 变址寄存器, scale 必须为 1, 2, 4, 8
+    pub offset: Option<ValueNode>, // 立即数偏移
 }
 
 pub struct LabelNode {
-    label: String,
+    pub label: String,
 }
 
 impl Node for ProgramNode {
     fn accept<V: Visitor>(&self, visitor: &mut V) {
         visitor.visit_program(self);
-    }
-}
-
-impl Node for PseudoNode {
-    fn accept<V: Visitor>(&self, visitor: &mut V) {
-        visitor.visit_pseudo(self);
     }
 }
 
