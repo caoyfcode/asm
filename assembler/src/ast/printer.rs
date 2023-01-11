@@ -124,7 +124,7 @@ impl Visitor for AstPrinter {
         }
 
         self.inc_depth();
-        for op in &node.oprands {
+        for op in &node.operands {
             op.accept(self);
         }
         self.dec_depth();
@@ -204,7 +204,7 @@ mod tests {
                     InstructionNode {
                         mnemonic: String::from("mov"),
                         operand_size: Some(Size::DoubleWord),
-                        oprands: vec![
+                        operands: vec![
                             OperandNode::Register(
                                 RegisterNode { name: String::from("ecx") }
                             ),

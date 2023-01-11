@@ -98,7 +98,7 @@ pub struct PseudoCommNode {
 pub struct InstructionNode {
     pub mnemonic: String,
     pub operand_size: Option<Size>,
-    pub oprands: Vec<OperandNode>, // dest, src1, src2, ...
+    pub operands: Vec<OperandNode>, // 按照 AT&T 语法顺序
 }
 
 pub enum OperandNode {

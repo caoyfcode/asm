@@ -1,6 +1,6 @@
 use std::{io::BufRead, collections::VecDeque};
 
-use crate::{ast::{Ast, ProgramNode, ProgramItem, InstructionNode, LabelNode, PseudoSectionNode, PseudoGlobalNode, PseudoEquNode, PseudoFillNode, PseudoIntegerNode, PseudoStringNode, PseudoCommNode, ValueNode}, common::Size};
+use crate::{ast::{Ast, ProgramNode, ProgramItem, InstructionNode, LabelNode, PseudoSectionNode, PseudoGlobalNode, PseudoEquNode, PseudoFillNode, PseudoIntegerNode, PseudoStringNode, PseudoCommNode, ValueNode, OperandNode, RegisterNode, MemNode}, common::Size, instruction};
 
 use self::scanner::{Scanner, Token};
 
@@ -207,7 +207,104 @@ impl<R: BufRead> Parser<R> {
     }
 
     fn instruction(&mut self) -> InstructionNode {
-        todo!()
+        let (mnemonic, operand_size) = match_token! {
+            self.next_token(), "mnemonic",
+            Token::Mnemonic(mnemonic, operand_size) => (mnemonic, operand_size),
+        };
+        let mut operands = Vec::new();
+
+        if instruction::is_jump(&mnemonic) {
+            operands.push(self.jump_operand());
+        } else if self.lookahead().is_some() && self.lookahead().unwrap() != &Token::Eol {
+            operands.push(self.none_jump_operand()); // first operand
+            while self.lookahead().is_some() && self.lookahead().unwrap() == &Token::Comma {
+                self.next_token();
+                operands.push(self.none_jump_operand());
+            }
+        }
+
+        InstructionNode { mnemonic, operand_size, operands }
+    }
+
+    fn jump_operand(&mut self) -> OperandNode {
+        match_token! {
+            self.lookahead(), "jump operand",
+            Token::Symbol(_) | Token::Integer(_) => OperandNode::Immediate(self.value()),
+            Token::Star => {
+                self.next_token();
+                match_token! {
+                    self.lookahead(), "register or mem",
+                    Token::Register(_) => OperandNode::Register(self.register()),
+                    Token::Symbol(_) | Token::Integer(_) | Token::Lparen => OperandNode::Memory(self.mem()),
+                }
+            },
+        }
+    }
+
+    fn none_jump_operand(&mut self) -> OperandNode {
+        match_token! {
+            self.lookahead(), "none-jump operand",
+            Token::Register(_) => OperandNode::Register(self.register()),
+            Token::Dollar => {
+                self.next_token();
+                OperandNode::Immediate(self.value())
+            },
+            Token::Symbol(_) | Token::Integer(_) | Token::Lparen => OperandNode::Memory(self.mem()),
+        }
+    }
+
+    fn register(&mut self) -> RegisterNode {
+        match_token! {
+            self.next_token(), "register",
+            Token::Register(name) => RegisterNode { name }
+        }
+    }
+
+    fn mem(&mut self) -> MemNode {
+        let offset = match_token! {
+            self.lookahead(), "value or lparen",
+            Token::Symbol(_) | Token::Integer(_) => Some(self.value()),
+            Token::Lparen => None,
+        };
+
+        match self.lookahead() {
+            Some(Token::Lparen) => {
+                self.next_token();
+            },
+            _ => return MemNode { offset, base: None, index_scale: None},
+        }
+
+        let base = match_token! {
+            self.lookahead(), "register or comma",
+            Token::Register(_) => Some(self.register()),
+            Token::Comma => None,
+        };
+
+        match_token! {
+            self.next_token(), "rparen or comma",
+            Token::Rparen => return MemNode { offset, base, index_scale: None},
+            Token::Comma => (),
+        }
+
+        let index = match_token! {
+            self.lookahead(), "register",
+            Token::Register(_) => self.register(),
+        };
+
+        match_token! {
+            self.next_token(), "rparen or comma",
+            Token::Rparen => return MemNode { offset, base, index_scale: Some((index, 1))},
+            Token::Comma => (),
+        }
+
+        let scale = match_token! {
+            self.next_token(), "integer",
+            Token::Integer(value) => value,
+        };
+
+        match_token! {self.next_token(), "rparen", Token::Rparen }
+
+        MemNode { offset, base, index_scale: Some((index, scale)) }
     }
 
     fn label(&mut self) -> LabelNode {
@@ -245,7 +342,6 @@ mod tests {
         let cursor = Cursor::new(code);
         let mut parser = Parser::new(cursor);
         let parser_ast = parser.build_ast();
-        let parser_ast2 = parser.build_ast();
 
         let mut printer = AstPrinter::new();
         parser_ast.run_visitor(&mut printer);
@@ -258,6 +354,48 @@ mod tests {
     fn test_syntex_err_eol() {
         let code = r#"
         .section .text .global main
+        "#.trim();
+        let cursor = Cursor::new(code);
+        let mut parser = Parser::new(cursor);
+        parser.build_ast();
+    }
+
+    #[test]
+    fn test_instruction() {
+        let code = r#"
+        main:
+            pusha
+            pushf
+            jmp *0x1234
+            int $0x80
+        hehe:
+            pushb $0x10
+            push %eax
+            movl %ebx, 0x01(%eax, %ebx, 2)
+        "#.trim();
+        let cursor = Cursor::new(code);
+        let mut parser = Parser::new(cursor);
+        let parser_ast = parser.build_ast();
+
+        let mut printer = AstPrinter::new();
+        parser_ast.run_visitor(&mut printer);
+        println!("");
+        println!("{}", printer.as_str());
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_syntex_error_comma() {
+        let code = r#"
+        main:
+            pusha
+            pushf
+            jmp *0x1234
+            int $0x80
+        hehe:
+            pushb $0x10
+            push %eax, # here should panic
+            movl %ebx, 0x01(%eax, %ebx, 2)
         "#.trim();
         let cursor = Cursor::new(code);
         let mut parser = Parser::new(cursor);
