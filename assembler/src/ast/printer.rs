@@ -137,7 +137,15 @@ impl Visitor for AstPrinter {
         match node {
             OperandNode::Register(n) => n.accept(self),
             OperandNode::Immediate(n) => n.accept(self),
-            OperandNode::Memory(n) => n.accept(self),
+            OperandNode::Memory(n, None) => n.accept(self),
+            OperandNode::Memory(n, Some(reg)) => {
+                n.accept(self);
+                self.write_indent();
+                writeln!(self.buf, "segment register").unwrap();
+                self.inc_depth();
+                reg.accept(self);
+                self.dec_depth();
+            },
         }
         self.dec_depth();
     }
@@ -220,7 +228,8 @@ mod tests {
                                     offset: Some(
                                         ValueNode::Integer(4)
                                     )
-                                }
+                                },
+                                Some(RegisterNode { name: String::from("ds") }),
                             )
                         ]
                     }

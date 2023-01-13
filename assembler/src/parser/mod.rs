@@ -6,11 +6,11 @@ use self::scanner::{Scanner, Token};
 
 mod scanner;
 
-/// 对一个 `Option<Token>` 进行模式匹配, 匹配特定模式的 `Token`, 并可以根据需要返回
+/// 对一个 `Option<Token>` 或 `Option<&Token>`进行模式匹配, 匹配特定的 `Some(Token)` 或 `Some(&Token)`, 在不匹配时 panic
 ///
 /// 参数为:
-/// - 进行匹配的 `Option<Token>` 或引用类型
-/// - 要匹配的模式的信息, 用于匹配失败 panic 信息, 类型需要实现 `Display`
+/// - 进行匹配的 `Option<Token>` 或 `Option<&Token>`
+/// - 一个实现了 `Display` 的类型, 用于匹配失败时 panic 的信息一部分(`"syntax error: expected {}, but found ..."`)
 /// - 逗号分隔的模式列表, 若要返回值, 使用 `<pat> => <expr>` 形式, 不返回值则使用 `<pat>`
 macro_rules! match_token {
     ($t:expr, $pat_msg:expr, $($pat:pat => $out:expr),+ $(,)?) => {
@@ -232,11 +232,7 @@ impl<R: BufRead> Parser<R> {
             Token::Symbol(_) | Token::Integer(_) => OperandNode::Immediate(self.value()),
             Token::Star => {
                 self.next_token();
-                match_token! {
-                    self.lookahead(), "register or mem",
-                    Token::Register(_) => OperandNode::Register(self.register()),
-                    Token::Symbol(_) | Token::Integer(_) | Token::Lparen => OperandNode::Memory(self.mem()),
-                }
+                self.register_or_mem_operand()
             },
         }
     }
@@ -244,12 +240,29 @@ impl<R: BufRead> Parser<R> {
     fn none_jump_operand(&mut self) -> OperandNode {
         match_token! {
             self.lookahead(), "none-jump operand",
-            Token::Register(_) => OperandNode::Register(self.register()),
             Token::Dollar => {
                 self.next_token();
                 OperandNode::Immediate(self.value())
             },
-            Token::Symbol(_) | Token::Integer(_) | Token::Lparen => OperandNode::Memory(self.mem()),
+            Token::Register(_) | Token::Symbol(_) | Token::Integer(_) | Token::Lparen => self.register_or_mem_operand(),
+        }
+    }
+
+    fn register_or_mem_operand(&mut self) -> OperandNode {
+        match_token! {
+            self.lookahead(), "register or mem",
+            Token::Register(_) => {
+                let reg = self.register();
+                match_token! {
+                    self.lookahead(), "",
+                    Token::Colon => {
+                        self.next_token();
+                        OperandNode::Memory(self.mem(), Some(reg))
+                    },
+                    _ => OperandNode::Register(reg),
+                }
+            },
+            Token::Symbol(_) | Token::Integer(_) | Token::Lparen => OperandNode::Memory(self.mem(), None),
         }
     }
 
@@ -400,5 +413,18 @@ mod tests {
         let cursor = Cursor::new(code);
         let mut parser = Parser::new(cursor);
         parser.build_ast();
+    }
+
+    #[test]
+    fn test_segment_register_mem_operand() {
+        let code = "movb $2, %ds:(%eax, %ebx, 1)";
+        let cursor = Cursor::new(code);
+        let mut parser = Parser::new(cursor);
+        let ast = parser.build_ast();
+
+        let mut printer = AstPrinter::new();
+        ast.run_visitor(&mut printer);
+        println!("");
+        println!("{}", printer.as_str());
     }
 }

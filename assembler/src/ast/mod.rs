@@ -104,7 +104,7 @@ pub struct InstructionNode {
 pub enum OperandNode {
     Register(RegisterNode),
     Immediate(ValueNode),
-    Memory(MemNode),
+    Memory(MemNode, Option<RegisterNode>), // 内存操作数与段寄存器
 }
 
 pub struct RegisterNode {
