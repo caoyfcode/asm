@@ -4,6 +4,7 @@ use lazy_static::lazy_static;
 use regex::Regex;
 
 use crate::common::Size;
+use crate::instruction::{mnemonics_without_size, mnemonics_with_size, registers};
 
 #[derive(Debug, PartialEq, Clone)]
 pub(super) enum Token {
@@ -54,30 +55,50 @@ lazy_static! {
         "^(#|;|//).*$" => Token::Comment,
     ];
 
-    static ref MNEMONIC_SIMPLE: Regex = Regex::new(
-        r"(?x) # ignore whitespace and allow line comments
-        ^(?P<mnemonic>
-            pusha|pushad|pushf|pushfd|popa|popad|popf|popfd|ret|
-            int|dec|inc|jmp|call|
-            ja|jae|jb|jbe|je|jna|jnae|jnb|jnbe|jne
-        )\b"
-    ).unwrap();
+    static ref MNEMONIC_WITHOUT_SIZE: Regex = {
+        let mut regex = String::from("^(?P<mnemonic>");
+        let mut first = true;
+        for mnemonic in mnemonics_without_size() {
+            if first {
+                first = false;
+            } else {
+                regex += "|";
+            }
+            regex += mnemonic;
+        }
+        regex += r")\b";
+        Regex::new(regex.as_str()).unwrap()
+    };
 
-    static ref MNEMONIC_WITH_SIZE: Regex = Regex::new(
-        r"(?x)
-        ^(?P<mnemonic>
-            push|pop|mul|div|mov|cmp|add|sub|and|or|xor|test|lea
-        )(?P<size>[bwl]?)\b"
-    ).unwrap();
+    static ref MNEMONIC_WITH_SIZE: Regex = {
+        let mut regex = String::from("^(?P<mnemonic>");
+        let mut first = true;
+        for mnemonic in mnemonics_with_size() {
+            if first {
+                first = false;
+            } else {
+                regex += "|";
+            }
+            regex += mnemonic;
+        }
+        regex += r")(?P<size>[bwl]?)\b";
+        Regex::new(regex.as_str()).unwrap()
+    };
 
-    static ref REGISTER: Regex = Regex::new(
-        r"(?x)
-        ^%(?P<name>
-        eax|ax|ah|al|ebx|bx|bh|bl|
-        ecx|cx|ch|cl|edx|dx|dh|dl|
-        esi|si|edi|di|eflags|flags|eip|ip|
-        cs|ds|es|fs|gs|ss)"
-    ).unwrap();
+    static ref REGISTER: Regex = {
+        let mut regex = String::from(r"^%(?P<name>");
+        let mut first = true;
+        for register in registers() {
+            if first {
+                first = false;
+            } else {
+                regex += "|";
+            }
+            regex += register;
+        }
+        regex += ")";
+        Regex::new(regex.as_str()).unwrap()
+    };
 
     static ref INTEGER: Regex = Regex::new(
         "(?P<bin>^0b[01]+)|(?P<hex>^0x[0-9a-f]+)|(?P<dec>^[1-9][0-9]*)|(?P<oct>^0[0-7]*)|(?P<char>^'[ -~]')"
@@ -144,7 +165,7 @@ impl Token {
             }
         }
         // simple instruction
-        if let Some(cap) = MNEMONIC_SIMPLE.captures(str) {
+        if let Some(cap) = MNEMONIC_WITHOUT_SIZE.captures(str) {
             let end = cap.get(0).unwrap().end();
             return (
                 Token::Mnemonic(String::from(cap.name("mnemonic").unwrap().as_str()), None),
