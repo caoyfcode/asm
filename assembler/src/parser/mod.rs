@@ -1,4 +1,4 @@
-use std::{io::BufRead, collections::VecDeque};
+use std::io::BufRead;
 
 use crate::{ast::{Ast, ProgramNode, ProgramItem, InstructionNode, LabelNode, PseudoSectionNode, PseudoGlobalNode, PseudoEquNode, PseudoFillNode, PseudoIntegerNode, PseudoStringNode, PseudoCommNode, ValueNode, OperandNode, RegisterNode, MemNode}, common::Size, instruction};
 
@@ -31,14 +31,14 @@ macro_rules! match_token {
 
 pub struct Parser<R: BufRead> {
     scanner: Scanner<R>,
-    lookahead_buffer: VecDeque<Token>,
+    lookahead: Option<Token>,  // 储存向前看的一个符号, 但是不要直接使用, 应用 lookahead(), next_token() 代替
 }
 
 impl<R: BufRead> Parser<R> {
     pub fn new(reader: R) -> Self {
         Self {
             scanner: Scanner::new(reader),
-            lookahead_buffer: VecDeque::new(),
+            lookahead: None,
         }
     }
 
@@ -46,25 +46,18 @@ impl<R: BufRead> Parser<R> {
         Ast::new(self.program())
     }
 
-    fn lookahead_nth(&mut self, n: usize) -> Option<&Token> {
-        while self.lookahead_buffer.len() <= n {
-            let token = self.scanner.next()?;
-            self.lookahead_buffer.push_back(token);
-        }
-        Some(&self.lookahead_buffer[n])
-    }
-
     fn lookahead(&mut self) -> Option<&Token> {
-        self.lookahead_nth(0)
+        if self.lookahead.is_none() {
+            self.lookahead = self.scanner.next();
+        }
+        self.lookahead.as_ref()
     }
 
     fn next_token(&mut self) -> Option<Token> {
-        let token = if self.lookahead_buffer.len() < 1 {
-            self.scanner.next()
-        } else {
-            self.lookahead_buffer.pop_front()
-        };
-        token
+        match self.lookahead {
+            Some(_) => self.lookahead.take(),
+            None => self.scanner.next(),
+        }
     }
 
     fn program(&mut self) -> ProgramNode {
