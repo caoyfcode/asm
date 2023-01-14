@@ -1,33 +1,35 @@
 use std::io::BufRead;
 
-use crate::{ast::{Ast, ProgramNode, ProgramItem, InstructionNode, LabelNode, PseudoSectionNode, PseudoGlobalNode, PseudoEquNode, PseudoFillNode, PseudoIntegerNode, PseudoStringNode, PseudoCommNode, ValueNode, OperandNode, RegisterNode, MemNode}, common::Size, instruction};
+use crate::common::{Size, Error};
+use crate::instruction;
+use crate::ast::{Ast, ProgramNode, ProgramItem, InstructionNode, LabelNode, PseudoSectionNode, PseudoGlobalNode, PseudoEquNode, PseudoFillNode, PseudoIntegerNode, PseudoStringNode, PseudoCommNode, ValueNode, OperandNode, RegisterNode, MemNode};
 
 use self::scanner::{Scanner, Token};
 
 mod scanner;
 
-/// 对一个 `Option<Token>` 或 `Option<&Token>`进行模式匹配, 匹配特定的 `Some(Token)` 或 `Some(&Token)`, 在不匹配时 panic
+/// 对一个 `Option<Token>` 或 `Option<&Token>`进行模式匹配, 匹配特定的 `Some(Token)` 或 `Some(&Token)`, 并返回一个 `Result<T, crate::common::Error>`
 ///
 /// 参数为:
 /// - 进行匹配的 `Option<Token>` 或 `Option<&Token>`
-/// - 一个实现了 `Display` 的类型, 用于匹配失败时 panic 的信息一部分(`"syntax error: expected {}, but found ..."`)
-/// - 逗号分隔的模式列表, 若要返回值, 使用 `<pat> => <expr>` 形式, 不返回值则使用 `<pat>`
+/// - 逗号分隔的模式列表, 若要返回值, 使用 `<pat> => <expr>` 形式, 不返回值则使用 `<pat>`, 要返回的值会包裹到 `Result` 中
 macro_rules! match_token {
-    ($t:expr, $pat_msg:expr, $($pat:pat => $out:expr),+ $(,)?) => {
+    ($t:expr, $($pat:pat => $out:expr),+ $(,)?) => {
         match $t {
-            $(Some($pat) => $out,)+
-            Some(other) => panic!("syntax error: expected {}, but found {:?}", $pat_msg, other),
-            None => panic!("syntax error: expected {}, but found nothing", $pat_msg),
+            #[allow(unreachable_code)]
+            $(Some($pat) => Ok($out),)+
+            _ => Err($crate::common::Error::UnexpectedSymbol),
         }
     };
-    ($t:expr, $pat_msg:expr, $($pat:pat),+ $(,)?) => {
+    ($t:expr, $($pat:pat),+ $(,)?) => {
         match $t {
-            $(Some($pat) => (),)+
-            Some(other) => panic!("syntax error: expected {}, but found {:?}", $pat_msg, other),
-            None => panic!("syntax error: expected {}, but found nothing", $pat_msg),
+            $(Some($pat) => Ok(()),)+
+            _ => Err($crate::common::Error::UnexpectedSymbol),
         }
     };
 }
+
+type Result<T> = core::result::Result<T, Error>;
 
 pub struct Parser<R: BufRead> {
     scanner: Scanner<R>,
@@ -42,8 +44,8 @@ impl<R: BufRead> Parser<R> {
         }
     }
 
-    pub fn build_ast(&mut self) -> Ast {
-        Ast::new(self.program())
+    pub fn build_ast(&mut self) -> Result<Ast> {
+        Ok(Ast::new(self.program()?))
     }
 
     fn lookahead(&mut self) -> Option<&Token> {
@@ -60,252 +62,252 @@ impl<R: BufRead> Parser<R> {
         }
     }
 
-    fn program(&mut self) -> ProgramNode {
+    fn program(&mut self) -> Result<ProgramNode> {
         let mut items = Vec::new();
 
         while self.lookahead().is_some() {
-            match_token! {
-                self.lookahead(), "pseudo or mnemonic or symbol or eol",
-                Token::DotSection => items.push(ProgramItem::PseudoSection(self.pseudo_section())),
-                Token::DotGlobal => items.push(ProgramItem::PseudoGlobal(self.pseudo_global())),
-                Token::DotEqu => items.push(ProgramItem::PseudoEqu(self.pseudo_equ())),
-                Token::DotFill => items.push(ProgramItem::PseudoFill(self.pseudo_fill())),
-                Token::DotByte | Token::DotWord | Token::DotLong => items.push(ProgramItem::PseudoInteger(self.pseudo_integer())),
-                Token::DotAscii | Token::DotAsciz=> items.push(ProgramItem::PseudoString(self.pseudo_string())),
-                Token::DotComm | Token::DotLcomm => items.push(ProgramItem::PseudoComm(self.pseudo_comm())),
-                Token::Mnemonic(_, _) => items.push(ProgramItem::Instruction(self.instruction())),
-                Token::Symbol(_) => items.push(ProgramItem::Label(self.label())),
-            }
+            match_token!(
+                self.lookahead(),
+                Token::DotSection => items.push(ProgramItem::PseudoSection(self.pseudo_section()?)),
+                Token::DotGlobal => items.push(ProgramItem::PseudoGlobal(self.pseudo_global()?)),
+                Token::DotEqu => items.push(ProgramItem::PseudoEqu(self.pseudo_equ()?)),
+                Token::DotFill => items.push(ProgramItem::PseudoFill(self.pseudo_fill()?)),
+                Token::DotByte | Token::DotWord | Token::DotLong => items.push(ProgramItem::PseudoInteger(self.pseudo_integer()?)),
+                Token::DotAscii | Token::DotAsciz=> items.push(ProgramItem::PseudoString(self.pseudo_string()?)),
+                Token::DotComm | Token::DotLcomm => items.push(ProgramItem::PseudoComm(self.pseudo_comm()?)),
+                Token::Mnemonic(_, _) => items.push(ProgramItem::Instruction(self.instruction()?)),
+                Token::Symbol(_) => items.push(ProgramItem::Label(self.label()?)),
+            )?;
         }
 
-        ProgramNode { items }
+        Ok(ProgramNode { items })
     }
 
-    fn pseudo_section(&mut self) -> PseudoSectionNode {
-        match_token! { self.next_token(), ".section", Token::DotSection }
-        match_token! {
-            self.next_token(), "symbol",
+    fn pseudo_section(&mut self) -> Result<PseudoSectionNode> {
+        match_token!(self.next_token(), Token::DotSection)?;
+        match_token!(
+            self.next_token(),
             Token::Symbol(symbol) => PseudoSectionNode { symbol },
-        }
+        )
     }
 
-    fn pseudo_global(&mut self) -> PseudoGlobalNode {
-        match_token! { self.next_token(), ".global/.globl", Token::DotGlobal }
-        match_token! {
-            self.next_token(), "symbol",
+    fn pseudo_global(&mut self) -> Result<PseudoGlobalNode> {
+        match_token!(self.next_token(), Token::DotGlobal)?;
+        match_token!(
+            self.next_token(),
             Token::Symbol(symbol) => PseudoGlobalNode { symbol },
-        }
+        )
     }
 
-    fn pseudo_equ(&mut self) -> PseudoEquNode {
-        match_token! { self.next_token(), ".equ/.set",  Token::DotEqu }
-        let symbol = match_token! {
-            self.next_token(), "symbol",
+    fn pseudo_equ(&mut self) -> Result<PseudoEquNode> {
+        match_token!(self.next_token(), Token::DotEqu)?;
+        let symbol = match_token!(
+            self.next_token(),
             Token::Symbol(symbol) => symbol,
-        };
-        match_token! { self.next_token(), "comma", Token::Comma }
-        let value = match_token! {
-            self.next_token(), "integer",
+        )?;
+        match_token!(self.next_token(), Token::Comma)?;
+        let value = match_token!(
+            self.next_token(),
             Token::Integer(value) => value,
-        };
-        PseudoEquNode { symbol, value }
+        )?;
+        Ok(PseudoEquNode { symbol, value })
     }
 
-    fn pseudo_fill(&mut self) -> PseudoFillNode {
-        match_token! {self.next_token(), ".fill", Token::DotFill}
-        let repeat = match_token! {
-            self.next_token(), "integer",
+    fn pseudo_fill(&mut self) -> Result<PseudoFillNode> {
+        match_token!(self.next_token(), Token::DotFill)?;
+        let repeat = match_token!(
+            self.next_token(),
             Token::Integer(value) => value,
-        };
-        match_token! { self.next_token(), "comma", Token::Comma }
-        let size = match_token! {
-            self.next_token(), "integer",
+        )?;
+        match_token!(self.next_token(), Token::Comma)?;
+        let size = match_token!(
+            self.next_token(),
             Token::Integer(value) => value,
-        };
-        match_token! { self.next_token(), "comma", Token::Comma }
-        let value = self.value();
+        )?;
+        match_token!(self.next_token(), Token::Comma)?;
+        let value = self.value()?;
 
-        PseudoFillNode { repeat, size, value }
+        Ok(PseudoFillNode { repeat, size, value })
     }
 
-    fn value(&mut self) -> ValueNode {
-        match_token! {
-            self.next_token(), "symbol or integer",
+    fn value(&mut self) -> Result<ValueNode> {
+        match_token!(
+            self.next_token(),
             Token::Integer(value) => ValueNode::Integer(value),
             Token::Symbol(symbol) => ValueNode::Symbol(symbol),
-        }
+        )
     }
 
-    fn pseudo_integer(&mut self) -> PseudoIntegerNode {
-        let size = match_token! {
-            self.next_token(), ".byte or .word/.short or .long/.int",
+    fn pseudo_integer(&mut self) -> Result<PseudoIntegerNode> {
+        let size = match_token!(
+            self.next_token(),
             Token::DotByte => Size::Byte,
             Token::DotWord => Size::Word,
             Token::DotLong => Size::DoubleWord,
-        };
+        )?;
         let mut values = Vec::new();
-        values.push(self.value());
+        values.push(self.value()?);
         while self.lookahead().is_some() && self.lookahead().unwrap() == &Token::Comma {
             self.next_token();
-            values.push(self.value());
+            values.push(self.value()?);
         }
-        PseudoIntegerNode { size, values }
+        Ok(PseudoIntegerNode { size, values })
     }
 
-    fn pseudo_string(&mut self) -> PseudoStringNode {
-        let zero_end = match_token! {
-            self.next_token(), ".ascii or .asciz/.string",
+    fn pseudo_string(&mut self) -> Result<PseudoStringNode> {
+        let zero_end = match_token!(
+            self.next_token(),
             Token::DotAscii => false,
             Token::DotAsciz => true,
-        };
-        let content = match_token! {
-            self.next_token(), "string",
+        )?;
+        let content = match_token!(
+            self.next_token(),
             Token::String(str) => str,
-        };
-        PseudoStringNode { zero_end, content }
+        )?;
+        Ok(PseudoStringNode { zero_end, content })
     }
 
-    fn pseudo_comm(&mut self) -> PseudoCommNode {
-        let is_local = match_token! {
-            self.next_token(), ".lcomm or .comm",
+    fn pseudo_comm(&mut self) -> Result<PseudoCommNode> {
+        let is_local = match_token!(
+            self.next_token(),
             Token::DotLcomm => true,
             Token::DotComm => false,
-        };
-        let symbol = match_token! {
-            self.next_token(), "symbol",
+        )?;
+        let symbol = match_token!(
+            self.next_token(),
             Token::Symbol(symbol) => symbol,
-        };
-        match_token! { self.next_token(), "comma", Token::Comma}
-        let length = self.value();
-        PseudoCommNode { is_local, symbol, length }
+        )?;
+        match_token!(self.next_token(), Token::Comma)?;
+        let length = self.value()?;
+        Ok(PseudoCommNode { is_local, symbol, length })
     }
 
-    fn instruction(&mut self) -> InstructionNode {
-        let (mnemonic, operand_size) = match_token! {
-            self.next_token(), "mnemonic",
+    fn instruction(&mut self) -> Result<InstructionNode> {
+        let (mnemonic, operand_size) = match_token!(
+            self.next_token(),
             Token::Mnemonic(mnemonic, operand_size) => (mnemonic, operand_size),
-        };
+        )?;
         let mut operands = Vec::new();
 
         if instruction::is_jump(&mnemonic) { // jump instruction
-            operands.push(self.jump_operand());
+            operands.push(self.jump_operand()?);
         } else { // none-jump instruction
             let has_operand = match self.lookahead() {
                 Some(Token::Dollar | Token::Register(_) | Token::Symbol(_) | Token::Integer(_) | Token::Lparen) => true,
                 _ => false,
             };
             if has_operand {
-                operands.push(self.none_jump_operand()); // first operand
+                operands.push(self.none_jump_operand()?); // first operand
                 while self.lookahead().is_some() && self.lookahead().unwrap() == &Token::Comma {
                     self.next_token();
-                    operands.push(self.none_jump_operand());
+                    operands.push(self.none_jump_operand()?);
                 }
             }
         }
 
-        InstructionNode { mnemonic, operand_size, operands }
+        Ok(InstructionNode { mnemonic, operand_size, operands })
     }
 
-    fn jump_operand(&mut self) -> OperandNode {
-        match_token! {
-            self.lookahead(), "jump operand",
-            Token::Symbol(_) | Token::Integer(_) => OperandNode::Immediate(self.value()),
+    fn jump_operand(&mut self) -> Result<OperandNode> {
+        match_token!(
+            self.lookahead(),
+            Token::Symbol(_) | Token::Integer(_) => OperandNode::Immediate(self.value()?),
             Token::Star => {
                 self.next_token();
-                self.register_or_mem_operand()
+                self.register_or_mem_operand()?
             },
-        }
+        )
     }
 
-    fn none_jump_operand(&mut self) -> OperandNode {
-        match_token! {
-            self.lookahead(), "none-jump operand",
+    fn none_jump_operand(&mut self) -> Result<OperandNode> {
+        match_token!(
+            self.lookahead(),
             Token::Dollar => {
                 self.next_token();
-                OperandNode::Immediate(self.value())
+                OperandNode::Immediate(self.value()?)
             },
-            Token::Register(_) | Token::Symbol(_) | Token::Integer(_) | Token::Lparen => self.register_or_mem_operand(),
-        }
+            Token::Register(_) | Token::Symbol(_) | Token::Integer(_) | Token::Lparen => self.register_or_mem_operand()?,
+        )
     }
 
-    fn register_or_mem_operand(&mut self) -> OperandNode {
-        match_token! {
-            self.lookahead(), "register or mem",
+    fn register_or_mem_operand(&mut self) -> Result<OperandNode> {
+        match_token!(
+            self.lookahead(),
             Token::Register(_) => {
-                let reg = self.register();
+                let reg = self.register()?;
                 match self.lookahead() {
                     Some(Token::Colon) => {
                         self.next_token();
-                        OperandNode::Memory(self.mem(), Some(reg))
+                        OperandNode::Memory(self.mem()?, Some(reg))
                     },
                     _ => OperandNode::Register(reg),
                 }
             },
-            Token::Symbol(_) | Token::Integer(_) | Token::Lparen => OperandNode::Memory(self.mem(), None),
-        }
+            Token::Symbol(_) | Token::Integer(_) | Token::Lparen => OperandNode::Memory(self.mem()?, None),
+        )
     }
 
-    fn register(&mut self) -> RegisterNode {
-        match_token! {
-            self.next_token(), "register",
+    fn register(&mut self) -> Result<RegisterNode> {
+        match_token!(
+            self.next_token(),
             Token::Register(name) => RegisterNode { name }
-        }
+        )
     }
 
-    fn mem(&mut self) -> MemNode {
-        let offset = match_token! {
-            self.lookahead(), "value or lparen",
-            Token::Symbol(_) | Token::Integer(_) => Some(self.value()),
+    fn mem(&mut self) -> Result<MemNode> {
+        let offset = match_token!(
+            self.lookahead(),
+            Token::Symbol(_) | Token::Integer(_) => Some(self.value()?),
             Token::Lparen => None,
-        };
+        )?;
 
         match self.lookahead() {
             Some(Token::Lparen) => {
                 self.next_token();
             },
-            _ => return MemNode { offset, base: None, index_scale: None},
+            _ => return Ok(MemNode { offset, base: None, index_scale: None}),
         }
 
-        let base = match_token! {
-            self.lookahead(), "register or comma",
-            Token::Register(_) => Some(self.register()),
+        let base = match_token!(
+            self.lookahead(),
+            Token::Register(_) => Some(self.register()?),
             Token::Comma => None,
-        };
+        )?;
 
-        match_token! {
-            self.next_token(), "rparen or comma",
-            Token::Rparen => return MemNode { offset, base, index_scale: None},
+        match_token!(
+            self.next_token(),
+            Token::Rparen => return Ok(MemNode { offset, base, index_scale: None}),
             Token::Comma => (),
-        }
+        )?;
 
-        let index = match_token! {
-            self.lookahead(), "register",
-            Token::Register(_) => self.register(),
-        };
+        let index = match_token!(
+            self.lookahead(),
+            Token::Register(_) => self.register()?,
+        )?;
 
-        match_token! {
-            self.next_token(), "rparen or comma",
-            Token::Rparen => return MemNode { offset, base, index_scale: Some((index, 1))},
+        match_token!(
+            self.next_token(),
+            Token::Rparen => return Ok(MemNode { offset, base, index_scale: Some((index, 1))}),
             Token::Comma => (),
-        }
+        )?;
 
-        let scale = match_token! {
-            self.next_token(), "integer",
+        let scale = match_token!(
+            self.next_token(),
             Token::Integer(value) => value,
-        };
+        )?;
 
-        match_token! {self.next_token(), "rparen", Token::Rparen }
+        match_token!(self.next_token(), Token::Rparen)?;
 
-        MemNode { offset, base, index_scale: Some((index, scale)) }
+        Ok(MemNode { offset, base, index_scale: Some((index, scale)) })
     }
 
-    fn label(&mut self) -> LabelNode {
-        let label = match_token! {
-            self.next_token(), "symbol",
+    fn label(&mut self) -> Result<LabelNode> {
+        let label = match_token!(
+            self.next_token(),
             Token::Symbol(symbol) => symbol,
-        };
-        match_token! { self.next_token(), "colon", Token::Colon }
-        LabelNode { label }
+        )?;
+        match_token!(self.next_token(), Token::Colon)?;
+        Ok(LabelNode { label })
     }
 }
 
@@ -333,7 +335,7 @@ mod tests {
         "#.trim();
         let cursor = Cursor::new(code);
         let mut parser = Parser::new(cursor);
-        let parser_ast = parser.build_ast();
+        let parser_ast = parser.build_ast().unwrap();
 
         let mut printer = AstPrinter::new();
         parser_ast.run_visitor(&mut printer);
@@ -356,7 +358,7 @@ mod tests {
         "#.trim();
         let cursor = Cursor::new(code);
         let mut parser = Parser::new(cursor);
-        let parser_ast = parser.build_ast();
+        let parser_ast = parser.build_ast().unwrap();
 
         let mut printer = AstPrinter::new();
         parser_ast.run_visitor(&mut printer);
@@ -380,7 +382,7 @@ mod tests {
         "#.trim();
         let cursor = Cursor::new(code);
         let mut parser = Parser::new(cursor);
-        parser.build_ast();
+        parser.build_ast().unwrap();
     }
 
     #[test]
@@ -388,7 +390,7 @@ mod tests {
         let code = "movb $2, %ds:(%eax, %ebx, 1)";
         let cursor = Cursor::new(code);
         let mut parser = Parser::new(cursor);
-        let ast = parser.build_ast();
+        let ast = parser.build_ast().unwrap();
 
         let mut printer = AstPrinter::new();
         ast.run_visitor(&mut printer);

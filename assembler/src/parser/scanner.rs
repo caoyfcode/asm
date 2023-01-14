@@ -3,7 +3,7 @@ use std::io::BufRead;
 use lazy_static::lazy_static;
 use regex::Regex;
 
-use crate::common::Size;
+use crate::common::{Size, Error};
 use crate::instruction::{mnemonics_without_size, mnemonics_with_size, registers};
 
 #[derive(Debug, PartialEq, Clone)]
@@ -25,7 +25,7 @@ pub(super) enum Token {
     // 注释
     Comment,
     // 特殊符号
-    Err(String)
+    Err(Error)
 }
 
 macro_rules! regex_token_vec {
@@ -121,28 +121,28 @@ impl Token {
                 let end = bin.end();
                 return match u32::from_str_radix(&str[2..end], 2) {
                     Ok(integer) => Some((Token::Integer(integer), end)),
-                    Err(err) => Some((Token::Err(err.to_string() + ": " + bin.as_str()), 0)), // 有可能过大无法转换
+                    Err(_) => Some((Token::Err(Error::ParseIntFail), 0)), // 有可能过大无法转换
                 };
             }
             if let Some(oct) = cap.name("oct") {
                 let end = oct.end();
                 return match u32::from_str_radix(&str[0..end], 8) { // 0 被归到 8 进制
                     Ok(integer) => Some((Token::Integer(integer), end)),
-                    Err(err) => Some((Token::Err(err.to_string() + ": " + oct.as_str()), 0)),
+                    Err(_) => Some((Token::Err(Error::ParseIntFail), 0)),
                 };
             }
             if let Some(hex) = cap.name("hex") {
                 let end = hex.end();
                 return match u32::from_str_radix(&str[2..end], 16) {
                     Ok(integer) => Some((Token::Integer(integer), end)),
-                    Err(err) => Some((Token::Err(err.to_string() + ": " + hex.as_str()), 0)),
+                    Err(_) => Some((Token::Err(Error::ParseIntFail), 0)),
                 };
             }
             if let Some(dec) = cap.name("dec") {
                 let end = dec.end();
                 return match u32::from_str_radix(&str[0..end], 10) {
                     Ok(integer) => Some((Token::Integer(integer), end)),
-                    Err(err) => Some((Token::Err(err.to_string() + ": " + dec.as_str()), 0)),
+                    Err(_) => Some((Token::Err(Error::ParseIntFail), 0)),
                 };
             }
             if let Some(_) = cap.name("char") {
@@ -218,7 +218,7 @@ impl Token {
             }
             err_symbol_len += 1;
         }
-        (Token::Err(String::from("unknown symbol")), trim_len, err_symbol_len)
+        (Token::Err(Error::UnknownSymbol), trim_len, err_symbol_len)
     }
 }
 
@@ -290,7 +290,7 @@ impl<R: BufRead> Iterator for Scanner<R> {
 mod tests {
     use std::io::Cursor;
 
-    use crate::common::Size;
+    use crate::common::{Size, Error};
 
     use super::{Scanner, Token};
 
@@ -524,7 +524,7 @@ mod tests {
         let cursor = Cursor::new("%abc");
         let mut scanner = Scanner::new(cursor);
 
-        assert_eq!(scanner.next(), Some(Token::Err(String::from("unknown symbol"))));
+        assert_eq!(scanner.next(), Some(Token::Err(Error::UnknownSymbol)));
         assert_eq!(scanner.last_token_info(), (1, 1, "%abc"));
     }
 
