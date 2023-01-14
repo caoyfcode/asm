@@ -25,7 +25,7 @@ pub(super) enum Token {
     // 注释
     Comment,
     // 特殊符号
-    Eol, Err(String)
+    Err(String)
 }
 
 macro_rules! regex_token_vec {
@@ -256,26 +256,21 @@ impl<R: BufRead> Scanner<R> {
 }
 
 impl<R: BufRead> Iterator for Scanner<R> {
-    type Item = Token; // 返回 Token 中除了 Comment 之外的任何符号
+    type Item = Token; // 返回除了 Comment 之外的任何符号
 
     fn next(&mut self) -> Option<Self::Item> {
         while self.cursor >= self.buffer.len() {
             self.buffer.clear();
             self.cursor = 0;
+            self.last_cursor = 0;
+            self.last_size = 0;
             let size = self.reader.read_line(&mut self.buffer).unwrap();
             self.line += 1;
             if self.buffer.ends_with("\n") {
                 self.buffer.pop();
             }
             if size == 0 {
-                self.last_cursor = 0;
-                self.last_size = 0;
                 return None;
-            }
-            if self.line > 1 { // 除了首行外每一行开头 Eol
-                self.last_cursor = 0;
-                self.last_size = 0;
-                return Some(Token::Eol);
             }
         }
         let str = &self.buffer[self.cursor..];
@@ -316,7 +311,6 @@ mod tests {
             vec![
                 Token::DotSection,
                 Token::Symbol(String::from(".text")),
-                Token::Eol,
                 Token::DotSection,
                 Token::Symbol(String::from(".data")),
             ]
@@ -330,7 +324,6 @@ mod tests {
             vec![
                 Token::DotGlobal,
                 Token::Symbol(String::from("_start")),
-                Token::Eol,
                 Token::DotGlobal,
                 Token::Symbol(String::from("main")),
             ]
@@ -346,7 +339,6 @@ mod tests {
                 Token::Symbol(String::from("len")),
                 Token::Comma,
                 Token::Integer(3),
-                Token::Eol,
                 Token::DotEqu,
                 Token::Symbol(String::from("a")),
                 Token::Comma,
@@ -379,10 +371,10 @@ mod tests {
                         .long 70000
                         .int 70000";
         let tokens = vec![
-            DotByte, Integer(20), Comma, Integer(22), Eol,
-            DotWord, Integer(300), Eol,
-            DotWord, Integer(300), Eol,
-            DotLong, Integer(70000), Eol,
+            DotByte, Integer(20), Comma, Integer(22),
+            DotWord, Integer(300),
+            DotWord, Integer(300),
+            DotLong, Integer(70000),
             DotLong, Integer(70000),
         ];
 
@@ -395,8 +387,8 @@ mod tests {
                         .asciz "hello"
                         .string "hello""#;
         let tokens = vec![
-            Token::DotAscii, Token::String(String::from("hello")), Token::Eol,
-            Token::DotAsciz, Token::String(String::from("hello")), Token::Eol,
+            Token::DotAscii, Token::String(String::from("hello")),
+            Token::DotAsciz, Token::String(String::from("hello")),
             Token::DotAsciz, Token::String(String::from("hello"))
         ];
 
@@ -412,7 +404,6 @@ mod tests {
                 Token::Symbol(String::from("a")),
                 Token::Comma,
                 Token::Integer(4),
-                Token::Eol,
                 Token::DotLcomm,
                 Token::Symbol(String::from("b")),
                 Token::Comma,
@@ -430,10 +421,10 @@ mod tests {
                         .long 70000 // a long (double word)
                         .int 70000";
         let tokens = vec![
-            DotByte, Integer(20), Comma, Integer(22), Comma, Integer('h' as u32), Eol,
-            DotWord, Integer(300), Eol,
-            DotWord, Integer(300), Eol,
-            DotLong, Integer(70000), Eol,
+            DotByte, Integer(20), Comma, Integer(22), Comma, Integer('h' as u32),
+            DotWord, Integer(300),
+            DotWord, Integer(300),
+            DotLong, Integer(70000),
             DotLong, Integer(70000),
         ];
 
@@ -453,16 +444,16 @@ mod tests {
         .section .bss
         .lcomm buffer, 16"#.trim();
         let tokens = vec![
-            Token::DotSection, Token::Symbol(String::from(".text")), Token::Eol,
-            Token::DotGlobal, Token::Symbol(String::from("main")), Token::Eol,
-            Token::Symbol(String::from("main")), Token::Colon, Token::Eol,
-            Token::DotSection, Token::Symbol(String::from(".data")), Token::Eol,
+            Token::DotSection, Token::Symbol(String::from(".text")),
+            Token::DotGlobal, Token::Symbol(String::from("main")),
+            Token::Symbol(String::from("main")), Token::Colon,
+            Token::DotSection, Token::Symbol(String::from(".data")),
             Token::Symbol(String::from("hello")), Token::Colon,
-            Token::DotAsciz, Token::String(String::from("Hello, World")), Token::Eol,
+            Token::DotAsciz, Token::String(String::from("Hello, World")),
             Token::Symbol(String::from("num")), Token::Colon,
-            Token::DotLong, Token::Integer(0xf0), Token::Eol,
-            Token::DotEqu, Token::Symbol(String::from("haha")), Token::Comma, Token::Integer(0b1101), Token::Eol,
-            Token::DotSection, Token::Symbol(String::from(".bss")), Token::Eol,
+            Token::DotLong, Token::Integer(0xf0),
+            Token::DotEqu, Token::Symbol(String::from("haha")), Token::Comma, Token::Integer(0b1101),
+            Token::DotSection, Token::Symbol(String::from(".bss")),
             Token::DotLcomm, Token::Symbol(String::from("buffer")), Token::Comma, Token::Integer(16),
         ];
         test_str(str, tokens);
@@ -473,11 +464,11 @@ mod tests {
         test_str(
             "main:\npusha\npushf\nint $0x80\njmp *0x1234",
             vec![
-                Token::Symbol(String::from("main")), Token::Colon, Token::Eol,
-                Token::Mnemonic(String::from("pusha"), None), Token::Eol,
-                Token::Mnemonic(String::from("pushf"), None), Token::Eol,
+                Token::Symbol(String::from("main")), Token::Colon,
+                Token::Mnemonic(String::from("pusha"), None),
+                Token::Mnemonic(String::from("pushf"), None),
                 Token::Mnemonic(String::from("int"), None), Token::Dollar,
-                Token::Integer(0x80), Token::Eol,
+                Token::Integer(0x80),
                 Token::Mnemonic(String::from("jmp"), None), Token::Star,
                 Token::Integer(0x1234)
             ]
@@ -489,8 +480,8 @@ mod tests {
         test_str(
             "pushb $0x10\npush %eax\nmovl %ebx, %cs:0x01(%eax, %ebx, 2)",
             vec![
-                Token::Mnemonic(String::from("push"), Some(Size::Byte)), Token::Dollar, Token::Integer(0x10), Token::Eol,
-                Token::Mnemonic(String::from("push"), None), Token::Register(String::from("eax")), Token::Eol,
+                Token::Mnemonic(String::from("push"), Some(Size::Byte)), Token::Dollar, Token::Integer(0x10),
+                Token::Mnemonic(String::from("push"), None), Token::Register(String::from("eax")),
                 Token::Mnemonic(String::from("mov"), Some(Size::DoubleWord)),
                 Token::Register(String::from("ebx")),Token::Comma,
                 Token::Register(String::from("cs")), Token::Colon, Token::Integer(0x01),
@@ -511,9 +502,6 @@ mod tests {
 
         assert_eq!(scanner.next(), Some(Token::Symbol(String::from(".text"))));
         assert_eq!(scanner.last_token_info(), (1, 10, ".text"));
-
-        assert_eq!(scanner.next(), Some(Token::Eol));
-        assert_eq!(scanner.last_token_info(), (2, 1, ""));
 
         assert_eq!(scanner.next(), Some(Token::Mnemonic(String::from("mov"), Some(Size::DoubleWord))));
         assert_eq!(scanner.last_token_info(), (2, 1, "movl"));

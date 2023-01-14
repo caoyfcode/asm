@@ -64,7 +64,6 @@ impl<R: BufRead> Parser<R> {
         let mut items = Vec::new();
 
         while self.lookahead().is_some() {
-            let mut match_eol = true;
             match_token! {
                 self.lookahead(), "pseudo or mnemonic or symbol or eol",
                 Token::DotSection => items.push(ProgramItem::PseudoSection(self.pseudo_section())),
@@ -75,18 +74,7 @@ impl<R: BufRead> Parser<R> {
                 Token::DotAscii | Token::DotAsciz=> items.push(ProgramItem::PseudoString(self.pseudo_string())),
                 Token::DotComm | Token::DotLcomm => items.push(ProgramItem::PseudoComm(self.pseudo_comm())),
                 Token::Mnemonic(_, _) => items.push(ProgramItem::Instruction(self.instruction())),
-                Token::Symbol(_) => {
-                    items.push(ProgramItem::Label(self.label()));
-                    match_eol = false;
-                },
-                Token::Eol => {
-                    self.next_token();
-                    match_eol = false;
-                },
-            }
-
-            if match_eol && self.lookahead().is_some() {
-                match_token! { self.next_token(), "eol", Token::Eol}
+                Token::Symbol(_) => items.push(ProgramItem::Label(self.label())),
             }
         }
 
@@ -156,17 +144,10 @@ impl<R: BufRead> Parser<R> {
             Token::DotLong => Size::DoubleWord,
         };
         let mut values = Vec::new();
-        let mut end = false;
-        while !end {
+        values.push(self.value());
+        while self.lookahead().is_some() && self.lookahead().unwrap() == &Token::Comma {
+            self.next_token();
             values.push(self.value());
-            end = match_token! {
-                self.lookahead(), "comma or eol",
-                Token::Comma => {
-                    self.next_token();
-                    false
-                },
-                Token::Eol => true
-            }
         }
         PseudoIntegerNode { size, values }
     }
@@ -206,13 +187,19 @@ impl<R: BufRead> Parser<R> {
         };
         let mut operands = Vec::new();
 
-        if instruction::is_jump(&mnemonic) {
+        if instruction::is_jump(&mnemonic) { // jump instruction
             operands.push(self.jump_operand());
-        } else if self.lookahead().is_some() && self.lookahead().unwrap() != &Token::Eol {
-            operands.push(self.none_jump_operand()); // first operand
-            while self.lookahead().is_some() && self.lookahead().unwrap() == &Token::Comma {
-                self.next_token();
-                operands.push(self.none_jump_operand());
+        } else { // none-jump instruction
+            let has_operand = match self.lookahead() {
+                Some(Token::Dollar | Token::Register(_) | Token::Symbol(_) | Token::Integer(_) | Token::Lparen) => true,
+                _ => false,
+            };
+            if has_operand {
+                operands.push(self.none_jump_operand()); // first operand
+                while self.lookahead().is_some() && self.lookahead().unwrap() == &Token::Comma {
+                    self.next_token();
+                    operands.push(self.none_jump_operand());
+                }
             }
         }
 
@@ -246,9 +233,8 @@ impl<R: BufRead> Parser<R> {
             self.lookahead(), "register or mem",
             Token::Register(_) => {
                 let reg = self.register();
-                match_token! {
-                    self.lookahead(), "",
-                    Token::Colon => {
+                match self.lookahead() {
+                    Some(Token::Colon) => {
                         self.next_token();
                         OperandNode::Memory(self.mem(), Some(reg))
                     },
@@ -353,17 +339,6 @@ mod tests {
         parser_ast.run_visitor(&mut printer);
         println!("");
         println!("{}", printer.as_str());
-    }
-
-    #[test]
-    #[should_panic]
-    fn test_syntex_err_eol() {
-        let code = r#"
-        .section .text .global main
-        "#.trim();
-        let cursor = Cursor::new(code);
-        let mut parser = Parser::new(cursor);
-        parser.build_ast();
     }
 
     #[test]
