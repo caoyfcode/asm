@@ -35,7 +35,7 @@ impl Visitor for AstPrinter {
         self.write_indent();
         writeln!(self.buf, "program").unwrap();
         self.inc_depth();
-        for item in &node.items {
+        for (item, _) in &node.items {
             match item {
                 ProgramItem::PseudoSection(node) => node.accept(self),
                 ProgramItem::PseudoGlobal(node) => node.accept(self),
@@ -202,13 +202,13 @@ mod tests {
     fn test() {
         let program = ProgramNode {
             items: vec![
-                ProgramItem::PseudoSection(
+                (ProgramItem::PseudoSection(
                     PseudoSectionNode {symbol: String::from(".text")}
-                ),
-                ProgramItem::Label(
+                ), 1),
+                (ProgramItem::Label(
                     LabelNode { label: String::from("main") }
-                ),
-                ProgramItem::Instruction(
+                ), 2),
+                (ProgramItem::Instruction(
                     InstructionNode {
                         mnemonic: String::from("mov"),
                         operand_size: Some(Size::DoubleWord),
@@ -233,26 +233,26 @@ mod tests {
                             )
                         ]
                     }
-                ),
-                ProgramItem::PseudoSection(
+                ), 3),
+                (ProgramItem::PseudoSection(
                     PseudoSectionNode {symbol: String::from(".data")}
-                ),
-                ProgramItem::Label(
+                ), 4),
+                (ProgramItem::Label(
                     LabelNode { label: String::from("hello") }
-                ),
-                ProgramItem::PseudoString(
+                ), 5),
+                (ProgramItem::PseudoString(
                     PseudoStringNode { zero_end: true, content: String::from("Hello, World!") }
-                ),
-                ProgramItem::PseudoSection(
+                ), 6),
+                (ProgramItem::PseudoSection(
                     PseudoSectionNode {symbol: String::from(".bss")}
-                ),
-                ProgramItem::PseudoComm(
+                ), 7),
+                (ProgramItem::PseudoComm(
                     PseudoCommNode {
                         is_local: true,
                         symbol: String::from("buf"),
                         length: ValueNode::Integer(8)
                     }
-                )
+                ), 8)
             ]
         };
         let ast = Ast::new(program);

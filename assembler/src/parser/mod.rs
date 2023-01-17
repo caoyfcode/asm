@@ -18,12 +18,15 @@ macro_rules! match_token {
         match $t {
             #[allow(unreachable_code)]
             $(Some($pat) => Ok($out),)+
+            Some(Token::Err(err)) => Err(err.clone()),
             _ => Err($crate::common::Error::UnexpectedSymbol),
         }
     };
     ($t:expr, $($pat:pat),+ $(,)?) => {
         match $t {
+            #[allow(unreachable_code)]
             $(Some($pat) => Ok(()),)+
+            Some(Token::Err(err)) => Err(err.clone()),
             _ => Err($crate::common::Error::UnexpectedSymbol),
         }
     };
@@ -66,18 +69,43 @@ impl<R: BufRead> Parser<R> {
         let mut items = Vec::new();
 
         while self.lookahead().is_some() {
+            let mut should_match_eol = true;
+            let line = self.scanner.last_token_info().0;
             match_token!(
                 self.lookahead(),
-                Token::DotSection => items.push(ProgramItem::PseudoSection(self.pseudo_section()?)),
-                Token::DotGlobal => items.push(ProgramItem::PseudoGlobal(self.pseudo_global()?)),
-                Token::DotEqu => items.push(ProgramItem::PseudoEqu(self.pseudo_equ()?)),
-                Token::DotFill => items.push(ProgramItem::PseudoFill(self.pseudo_fill()?)),
-                Token::DotByte | Token::DotWord | Token::DotLong => items.push(ProgramItem::PseudoInteger(self.pseudo_integer()?)),
-                Token::DotAscii | Token::DotAsciz=> items.push(ProgramItem::PseudoString(self.pseudo_string()?)),
-                Token::DotComm | Token::DotLcomm => items.push(ProgramItem::PseudoComm(self.pseudo_comm()?)),
-                Token::Mnemonic(_, _) => items.push(ProgramItem::Instruction(self.instruction()?)),
-                Token::Symbol(_) => items.push(ProgramItem::Label(self.label()?)),
+                Token::DotSection => items.push(
+                    (ProgramItem::PseudoSection(self.pseudo_section()?), line)
+                ),
+                Token::DotGlobal => items.push(
+                    (ProgramItem::PseudoGlobal(self.pseudo_global()?), line)
+                ),
+                Token::DotEqu => items.push(
+                    (ProgramItem::PseudoEqu(self.pseudo_equ()?), line)
+                ),
+                Token::DotFill => items.push(
+                    (ProgramItem::PseudoFill(self.pseudo_fill()?), line)
+                ),
+                Token::DotByte | Token::DotWord | Token::DotLong => items.push(
+                    (ProgramItem::PseudoInteger(self.pseudo_integer()?), line)
+                ),
+                Token::DotAscii | Token::DotAsciz=> items.push(
+                    (ProgramItem::PseudoString(self.pseudo_string()?), line)
+                ),
+                Token::DotComm | Token::DotLcomm => items.push(
+                    (ProgramItem::PseudoComm(self.pseudo_comm()?), line)
+                ),
+                Token::Mnemonic(_, _) => items.push(
+                    (ProgramItem::Instruction(self.instruction()?), line)
+                ),
+                Token::Symbol(_) => {
+                    items.push((ProgramItem::Label(self.label()?), line));
+                    should_match_eol = false;
+                },
+                Token::Eol => (),
             )?;
+            if should_match_eol {
+                match_token!(self.next_token(), Token::Eol)?;
+            }
         }
 
         Ok(ProgramNode { items })

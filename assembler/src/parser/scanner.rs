@@ -25,6 +25,7 @@ pub(super) enum Token {
     // 注释
     Comment,
     // 特殊符号
+    Eol,
     Err(Error)
 }
 
@@ -152,7 +153,7 @@ impl Token {
         None
     }
 
-    /// 返回从 str 中匹配到的第一个符号, 符号前空白字符的长度, 符号的长度
+    /// 返回从 str 中匹配到的第一个符号, 符号前空白字符的长度, 符号的长度, 匹配失败则返回 Token::Err
     fn matching(str: &str) -> (Token, usize, usize) {
         let len = str.len();
         let str = str.trim_start();
@@ -229,6 +230,7 @@ pub(super) struct Scanner<R: BufRead> {
     line: usize, // 当前行号, 初始为 0, 从 1 开始
     last_cursor: usize, // 上一个符号的 cursor
     last_size: usize, // 上一个符号的大小
+    end: bool, // 是否已经结束, 结束后再调用 next 将返回 None
 }
 
 impl<R: BufRead> Scanner<R> {
@@ -241,10 +243,11 @@ impl<R: BufRead> Scanner<R> {
             line: 0,
             last_cursor: 0,
             last_size: 0,
+            end: false,
         }
     }
 
-    /// 返回上个符号的行号, 列号, 内容(行号列号均从 1 开始)
+    /// 返回上个符号的行号, 列号, 内容(行号列号均从 1 开始), 其中 Eol 的行号为新行, 列号 0, 内容为空串
     pub(super) fn last_token_info(&self) -> (usize, usize, &str) {
         (
             self.line,
@@ -253,25 +256,36 @@ impl<R: BufRead> Scanner<R> {
         )
     }
 
+    fn read_line(&mut self) {
+        self.buffer.clear();
+        self.cursor = 0;
+        self.last_cursor = 0;
+        self.last_size = 0;
+        let size = self.reader.read_line(&mut self.buffer).unwrap();
+        self.line += 1;
+        if self.buffer.ends_with("\n") {
+            self.buffer.pop();
+        }
+        if size == 0 {
+            self.end = true;
+        }
+    }
+
 }
 
 impl<R: BufRead> Iterator for Scanner<R> {
     type Item = Token; // 返回除了 Comment 之外的任何符号
 
     fn next(&mut self) -> Option<Self::Item> {
-        while self.cursor >= self.buffer.len() {
-            self.buffer.clear();
-            self.cursor = 0;
-            self.last_cursor = 0;
-            self.last_size = 0;
-            let size = self.reader.read_line(&mut self.buffer).unwrap();
-            self.line += 1;
-            if self.buffer.ends_with("\n") {
-                self.buffer.pop();
-            }
-            if size == 0 {
-                return None;
-            }
+        if self.end {
+            return None;
+        }
+        if self.line == 0 { // 还未开始读取
+            self.read_line(); // 这里有可能没有内容直接结尾, 但是没有关系
+        }
+        if self.cursor >= self.buffer.len() { // 一行已经匹配结束
+            self.read_line();
+            return Some(Token::Eol); // 每行结尾会插入一个 Eol
         }
         let str = &self.buffer[self.cursor..];
         let (token, trim_len, size) = Token::matching(str);
@@ -311,8 +325,10 @@ mod tests {
             vec![
                 Token::DotSection,
                 Token::Symbol(String::from(".text")),
+                Token::Eol,
                 Token::DotSection,
                 Token::Symbol(String::from(".data")),
+                Token::Eol,
             ]
         );
     }
@@ -324,8 +340,10 @@ mod tests {
             vec![
                 Token::DotGlobal,
                 Token::Symbol(String::from("_start")),
+                Token::Eol,
                 Token::DotGlobal,
                 Token::Symbol(String::from("main")),
+                Token::Eol,
             ]
         );
     }
@@ -339,10 +357,12 @@ mod tests {
                 Token::Symbol(String::from("len")),
                 Token::Comma,
                 Token::Integer(3),
+                Token::Eol,
                 Token::DotEqu,
                 Token::Symbol(String::from("a")),
                 Token::Comma,
                 Token::Symbol(String::from("len")),
+                Token::Eol,
             ]
         );
     }
@@ -358,6 +378,7 @@ mod tests {
                 Token::Integer(2),
                 Token::Comma,
                 Token::Integer(0),
+                Token::Eol,
             ]
         );
     }
@@ -371,11 +392,11 @@ mod tests {
                         .long 70000
                         .int 70000";
         let tokens = vec![
-            DotByte, Integer(20), Comma, Integer(22),
-            DotWord, Integer(300),
-            DotWord, Integer(300),
-            DotLong, Integer(70000),
-            DotLong, Integer(70000),
+            DotByte, Integer(20), Comma, Integer(22), Token::Eol,
+            DotWord, Integer(300), Token::Eol,
+            DotWord, Integer(300), Token::Eol,
+            DotLong, Integer(70000), Token::Eol,
+            DotLong, Integer(70000), Token::Eol,
         ];
 
         test_str(str, tokens);
@@ -387,9 +408,9 @@ mod tests {
                         .asciz "hello"
                         .string "hello""#;
         let tokens = vec![
-            Token::DotAscii, Token::String(String::from("hello")),
-            Token::DotAsciz, Token::String(String::from("hello")),
-            Token::DotAsciz, Token::String(String::from("hello"))
+            Token::DotAscii, Token::String(String::from("hello")), Token::Eol,
+            Token::DotAsciz, Token::String(String::from("hello")), Token::Eol,
+            Token::DotAsciz, Token::String(String::from("hello")), Token::Eol,
         ];
 
         test_str(str, tokens);
@@ -404,10 +425,12 @@ mod tests {
                 Token::Symbol(String::from("a")),
                 Token::Comma,
                 Token::Integer(4),
+                Token::Eol,
                 Token::DotLcomm,
                 Token::Symbol(String::from("b")),
                 Token::Comma,
                 Token::Integer(8),
+                Token::Eol,
             ]
         );
     }
@@ -421,11 +444,11 @@ mod tests {
                         .long 70000 // a long (double word)
                         .int 70000";
         let tokens = vec![
-            DotByte, Integer(20), Comma, Integer(22), Comma, Integer('h' as u32),
-            DotWord, Integer(300),
-            DotWord, Integer(300),
-            DotLong, Integer(70000),
-            DotLong, Integer(70000),
+            DotByte, Integer(20), Comma, Integer(22), Comma, Integer('h' as u32), Token::Eol,
+            DotWord, Integer(300), Token::Eol,
+            DotWord, Integer(300), Token::Eol,
+            DotLong, Integer(70000), Token::Eol,
+            DotLong, Integer(70000), Token::Eol,
         ];
 
         test_str(str, tokens);
@@ -444,17 +467,17 @@ mod tests {
         .section .bss
         .lcomm buffer, 16"#.trim();
         let tokens = vec![
-            Token::DotSection, Token::Symbol(String::from(".text")),
-            Token::DotGlobal, Token::Symbol(String::from("main")),
-            Token::Symbol(String::from("main")), Token::Colon,
-            Token::DotSection, Token::Symbol(String::from(".data")),
+            Token::DotSection, Token::Symbol(String::from(".text")), Token::Eol,
+            Token::DotGlobal, Token::Symbol(String::from("main")), Token::Eol,
+            Token::Symbol(String::from("main")), Token::Colon, Token::Eol,
+            Token::DotSection, Token::Symbol(String::from(".data")), Token::Eol,
             Token::Symbol(String::from("hello")), Token::Colon,
-            Token::DotAsciz, Token::String(String::from("Hello, World")),
+            Token::DotAsciz, Token::String(String::from("Hello, World")), Token::Eol,
             Token::Symbol(String::from("num")), Token::Colon,
-            Token::DotLong, Token::Integer(0xf0),
-            Token::DotEqu, Token::Symbol(String::from("haha")), Token::Comma, Token::Integer(0b1101),
-            Token::DotSection, Token::Symbol(String::from(".bss")),
-            Token::DotLcomm, Token::Symbol(String::from("buffer")), Token::Comma, Token::Integer(16),
+            Token::DotLong, Token::Integer(0xf0), Token::Eol,
+            Token::DotEqu, Token::Symbol(String::from("haha")), Token::Comma, Token::Integer(0b1101), Token::Eol,
+            Token::DotSection, Token::Symbol(String::from(".bss")), Token::Eol,
+            Token::DotLcomm, Token::Symbol(String::from("buffer")), Token::Comma, Token::Integer(16), Token::Eol,
         ];
         test_str(str, tokens);
     }
@@ -464,13 +487,13 @@ mod tests {
         test_str(
             "main:\npusha\npushf\nint $0x80\njmp *0x1234",
             vec![
-                Token::Symbol(String::from("main")), Token::Colon,
-                Token::Mnemonic(String::from("pusha"), None),
-                Token::Mnemonic(String::from("pushf"), None),
+                Token::Symbol(String::from("main")), Token::Colon, Token::Eol,
+                Token::Mnemonic(String::from("pusha"), None), Token::Eol,
+                Token::Mnemonic(String::from("pushf"), None), Token::Eol,
                 Token::Mnemonic(String::from("int"), None), Token::Dollar,
-                Token::Integer(0x80),
+                Token::Integer(0x80), Token::Eol,
                 Token::Mnemonic(String::from("jmp"), None), Token::Star,
-                Token::Integer(0x1234)
+                Token::Integer(0x1234), Token::Eol,
             ]
         );
     }
@@ -480,14 +503,15 @@ mod tests {
         test_str(
             "pushb $0x10\npush %eax\nmovl %ebx, %cs:0x01(%eax, %ebx, 2)",
             vec![
-                Token::Mnemonic(String::from("push"), Some(Size::Byte)), Token::Dollar, Token::Integer(0x10),
-                Token::Mnemonic(String::from("push"), None), Token::Register(String::from("eax")),
+                Token::Mnemonic(String::from("push"), Some(Size::Byte)), Token::Dollar, Token::Integer(0x10), Token::Eol,
+                Token::Mnemonic(String::from("push"), None), Token::Register(String::from("eax")), Token::Eol,
                 Token::Mnemonic(String::from("mov"), Some(Size::DoubleWord)),
                 Token::Register(String::from("ebx")),Token::Comma,
                 Token::Register(String::from("cs")), Token::Colon, Token::Integer(0x01),
                 Token::Lparen, Token::Register(String::from("eax")), Token::Comma,
                 Token::Register(String::from("ebx")), Token::Comma, Token::Integer(2),
-                Token::Rparen
+                Token::Rparen,
+                Token::Eol,
             ]
         );
     }
@@ -503,6 +527,8 @@ mod tests {
         assert_eq!(scanner.next(), Some(Token::Symbol(String::from(".text"))));
         assert_eq!(scanner.last_token_info(), (1, 10, ".text"));
 
+        assert_eq!(scanner.next(), Some(Token::Eol));
+
         assert_eq!(scanner.next(), Some(Token::Mnemonic(String::from("mov"), Some(Size::DoubleWord))));
         assert_eq!(scanner.last_token_info(), (2, 1, "movl"));
 
@@ -515,8 +541,9 @@ mod tests {
         assert_eq!(scanner.next(), Some(Token::Register(String::from("ecx"))));
         assert_eq!(scanner.last_token_info(), (2, 12, "%ecx"));
 
+        assert_eq!(scanner.next(), Some(Token::Eol));
+
         assert_eq!(scanner.next(), None);
-        assert_eq!(scanner.last_token_info(), (3, 1, ""));
     }
 
     #[test]
@@ -526,6 +553,9 @@ mod tests {
 
         assert_eq!(scanner.next(), Some(Token::Err(Error::UnknownSymbol)));
         assert_eq!(scanner.last_token_info(), (1, 1, "%abc"));
+
+        assert_eq!(scanner.next(), Some(Token::Eol));
+        assert_eq!(scanner.next(), None);
     }
 
 }

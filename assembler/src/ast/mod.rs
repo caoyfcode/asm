@@ -40,7 +40,7 @@ impl Ast {
 }
 
 pub struct ProgramNode {
-    pub items: Vec<ProgramItem>,
+    pub items: Vec<(ProgramItem, usize)>, // usize 为行号, 从 1 开始
 }
 
 pub enum ProgramItem {
@@ -76,7 +76,7 @@ pub struct PseudoFillNode {
 
 pub enum ValueNode {
     Integer(u32),
-    Symbol(String), // 必须是 equ 定义的
+    Symbol(String),
 }
 
 pub struct PseudoIntegerNode {
