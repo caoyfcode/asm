@@ -114,36 +114,81 @@ lazy_static! {
     ).unwrap();
 }
 
-impl Token {
+pub(super) struct Scanner<R: BufRead> {
+    reader: R,
+    buffer: String,  // 缓存一行
+    cursor: usize,  // 指示分析到 buffer 的位置
+    line: usize, // 当前行号, 初始为 0, 从 1 开始
+    end: bool, // 是否已经结束, 结束后再调用 next 将返回 None
+}
 
-    fn match_integer(str: &str) -> Option<(Token, usize)> {
+impl<R: BufRead> Scanner<R> {
+
+    pub(super) fn new(reader: R) -> Self {
+        Self {
+            reader,
+            buffer: String::new(),
+            cursor: 0,
+            line: 0,
+            end: false,
+        }
+    }
+
+    fn read_line(&mut self) {
+        self.buffer.clear();
+        self.cursor = 0;
+        let size = self.reader.read_line(&mut self.buffer).unwrap();
+        self.line += 1;
+        if self.buffer.ends_with("\n") {
+            self.buffer.pop();
+        }
+        if size == 0 {
+            self.end = true;
+        }
+    }
+
+    /// 从 cursor 位置匹配一个整数, 返回符号与其长度
+    fn match_integer(&self) -> Option<(Token, usize)> {
+        let str = &self.buffer[self.cursor..];
         if let Some(cap) = INTEGER.captures(str) {
             if let Some(bin) = cap.name("bin") {
                 let end = bin.end();
                 return match u32::from_str_radix(&str[2..end], 2) {
                     Ok(integer) => Some((Token::Integer(integer), end)),
-                    Err(_) => Some((Token::Err(Error::ParseIntFail), 0)), // 有可能过大无法转换
+                    Err(_) => Some(( // 有可能过大无法转换
+                        Token::Err(Error::ParseIntFail(self.line, String::from(bin.as_str()))),
+                        end
+                    )),
                 };
             }
             if let Some(oct) = cap.name("oct") {
                 let end = oct.end();
                 return match u32::from_str_radix(&str[0..end], 8) { // 0 被归到 8 进制
                     Ok(integer) => Some((Token::Integer(integer), end)),
-                    Err(_) => Some((Token::Err(Error::ParseIntFail), 0)),
+                    Err(_) => Some(( // 有可能过大无法转换
+                        Token::Err(Error::ParseIntFail(self.line, String::from(oct.as_str()))),
+                        end
+                    )),
                 };
             }
             if let Some(hex) = cap.name("hex") {
                 let end = hex.end();
                 return match u32::from_str_radix(&str[2..end], 16) {
                     Ok(integer) => Some((Token::Integer(integer), end)),
-                    Err(_) => Some((Token::Err(Error::ParseIntFail), 0)),
+                    Err(_) => Some(( // 有可能过大无法转换
+                        Token::Err(Error::ParseIntFail(self.line, String::from(hex.as_str()))),
+                        end
+                    )),
                 };
             }
             if let Some(dec) = cap.name("dec") {
                 let end = dec.end();
                 return match u32::from_str_radix(&str[0..end], 10) {
                     Ok(integer) => Some((Token::Integer(integer), end)),
-                    Err(_) => Some((Token::Err(Error::ParseIntFail), 0)),
+                    Err(_) => Some(( // 有可能过大无法转换
+                        Token::Err(Error::ParseIntFail(self.line, String::from(dec.as_str()))),
+                        end
+                    )),
                 };
             }
             if let Some(_) = cap.name("char") {
@@ -153,15 +198,13 @@ impl Token {
         None
     }
 
-    /// 返回从 str 中匹配到的第一个符号, 符号前空白字符的长度, 符号的长度, 匹配失败则返回 Token::Err
-    fn matching(str: &str) -> (Token, usize, usize) {
-        let len = str.len();
-        let str = str.trim_start();
-        let trim_len = len - str.len();
+    /// 从 cursor 位置匹配一个符号, 返回符号与其长度
+    fn matching(&self) -> (Token, usize) {
+        let str = &self.buffer[self.cursor..];
         // pseudos
         for (reg, token) in &*PSEUDOS {
             if let Some(m) = reg.find(str) {
-                return (token.clone(), trim_len, m.end());
+                return (token.clone(), m.end());
             }
         }
         // simple instruction
@@ -169,7 +212,6 @@ impl Token {
             let end = cap.get(0).unwrap().end();
             return (
                 Token::Mnemonic(String::from(cap.name("mnemonic").unwrap().as_str()), None),
-                trim_len,
                 end
             );
         }
@@ -185,7 +227,6 @@ impl Token {
             };
             return (
                 Token::Mnemonic(String::from(mnemonic), size),
-                trim_len,
                 end
             );
         }
@@ -194,22 +235,21 @@ impl Token {
             let end = cap.get(0).unwrap().end();
             return (
                 Token::Register(String::from(cap.name("name").unwrap().as_str())),
-                trim_len,
                 end
             );
         }
         // integer
-        if let Some((token, size)) = Self::match_integer(str) {
-            return (token, trim_len, size);
+        if let Some((token, size)) = self.match_integer() {
+            return (token, size);
         }
         // string
         if let Some(m) = STRING.find(str) {
             let end = m.end();
-            return  (Token::String(String::from(&str[1..(end - 1)])), trim_len, end);
+            return  (Token::String(String::from(&str[1..(end - 1)])), end);
         }
         // symbol
         if let Some(m) = SYMBOL.find(str) {
-            return (Token::Symbol(String::from(m.as_str())), trim_len, m.end());
+            return (Token::Symbol(String::from(m.as_str())), m.end());
         }
         // err
         let mut err_symbol_len = 0;
@@ -219,83 +259,38 @@ impl Token {
             }
             err_symbol_len += 1;
         }
-        (Token::Err(Error::UnknownSymbol), trim_len, err_symbol_len)
-    }
-}
-
-pub(super) struct Scanner<R: BufRead> {
-    reader: R,
-    buffer: String,  // 缓存一行
-    cursor: usize,  // 指示分析到 buffer 的位置
-    line: usize, // 当前行号, 初始为 0, 从 1 开始
-    last_cursor: usize, // 上一个符号的 cursor
-    last_size: usize, // 上一个符号的大小
-    end: bool, // 是否已经结束, 结束后再调用 next 将返回 None
-}
-
-impl<R: BufRead> Scanner<R> {
-
-    pub(super) fn new(reader: R) -> Self {
-        Self {
-            reader,
-            buffer: String::new(),
-            cursor: 0,
-            line: 0,
-            last_cursor: 0,
-            last_size: 0,
-            end: false,
-        }
-    }
-
-    /// 返回上个符号的行号, 列号, 内容(行号列号均从 1 开始), 其中 Eol 的行号为新行, 列号 0, 内容为空串
-    pub(super) fn last_token_info(&self) -> (usize, usize, &str) {
-        (
-            self.line,
-            self.last_cursor + 1,
-            &self.buffer[self.last_cursor..(self.last_cursor + self.last_size)]
-        )
-    }
-
-    fn read_line(&mut self) {
-        self.buffer.clear();
-        self.cursor = 0;
-        self.last_cursor = 0;
-        self.last_size = 0;
-        let size = self.reader.read_line(&mut self.buffer).unwrap();
-        self.line += 1;
-        if self.buffer.ends_with("\n") {
-            self.buffer.pop();
-        }
-        if size == 0 {
-            self.end = true;
-        }
+        (Token::Err(Error::UnknownSymbol(self.line, String::from(&str[..err_symbol_len]))), err_symbol_len)
     }
 
 }
 
 impl<R: BufRead> Iterator for Scanner<R> {
-    type Item = Token; // 返回除了 Comment 之外的任何符号
+    type Item = (Token, usize, String); // 符号(除了Comment), 行号, 符号内容
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.end {
             return None;
         }
         if self.line == 0 { // 还未开始读取
-            self.read_line(); // 这里有可能没有内容直接结尾, 但是没有关系
+            self.read_line();
         }
         if self.cursor >= self.buffer.len() { // 一行已经匹配结束
             self.read_line();
-            return Some(Token::Eol); // 每行结尾会插入一个 Eol
+            return Some((Token::Eol, self.line - 1, String::new())); // 每行结尾会插入一个 Eol
         }
         let str = &self.buffer[self.cursor..];
-        let (token, trim_len, size) = Token::matching(str);
-        self.last_cursor = self.cursor + trim_len;
-        self.last_size = size;
-        self.cursor +=  trim_len + size;
+        let trim_str = str.trim_start();
+        self.cursor += str.len() - trim_str.len();
+        if self.cursor >= self.buffer.len() {
+            return self.next();
+        }
+        let (token, size) = self.matching();
+        let content = String::from(&self.buffer[self.cursor..self.cursor + size]);
+        self.cursor +=  size;
         if token == Token::Comment {
             self.next()
         } else {
-            Some(token)
+            Some((token, self.line, content))
         }
     }
 }
@@ -308,19 +303,31 @@ mod tests {
 
     use super::{Scanner, Token};
 
-    fn test_str(str: &str, tokens: Vec<Token>) {
+    fn test_str_tokens(str: &str, tokens: Vec<Token>) {
         let cursor = Cursor::new(str);
-        let mut scanner = Scanner::new(cursor);
+        let scanner = Scanner::new(cursor);
 
-        for token in tokens {
-            assert_eq!(scanner.next(), Some(token));
+        let mut iter = tokens.into_iter();
+        for (token, ..) in scanner {
+            assert_eq!(Some(token), iter.next())
         }
-        assert_eq!(scanner.next(), None);
+        assert_eq!(None, iter.next());
+    }
+
+    fn test_str_token_infos(str: &str, items: Vec<(Token, usize, String)>) {
+        let cursor = Cursor::new(str);
+        let scanner = Scanner::new(cursor);
+
+        let mut iter = items.into_iter();
+        for item in scanner {
+            assert_eq!(Some(item), iter.next());
+        }
+        assert_eq!(None, iter.next());
     }
 
     #[test]
     fn test_section_symbol() {
-        test_str(
+        test_str_tokens(
             ".section .text\n.section .data",
             vec![
                 Token::DotSection,
@@ -335,7 +342,7 @@ mod tests {
 
     #[test]
     fn test_global_symbol() {
-        test_str(
+        test_str_tokens(
             ".global _start\n.globl main",
             vec![
                 Token::DotGlobal,
@@ -350,7 +357,7 @@ mod tests {
 
     #[test]
     fn test_equ_symbol_comma_value() {
-        test_str(
+        test_str_tokens(
             ".equ len, 3\n.set a, len",
             vec![
                 Token::DotEqu,
@@ -369,7 +376,7 @@ mod tests {
 
     #[test]
     fn test_fill_repeat_size_value() {
-        test_str(
+        test_str_tokens(
             ".fill 3, 2, 0",
             vec![
                 Token::DotFill,
@@ -399,7 +406,7 @@ mod tests {
             DotLong, Integer(70000), Token::Eol,
         ];
 
-        test_str(str, tokens);
+        test_str_tokens(str, tokens);
     }
 
     #[test]
@@ -413,12 +420,12 @@ mod tests {
             Token::DotAsciz, Token::String(String::from("hello")), Token::Eol,
         ];
 
-        test_str(str, tokens);
+        test_str_tokens(str, tokens);
     }
 
     #[test]
     fn test_bss_section_decalarations() {
-        test_str(
+        test_str_tokens(
             ".comm a, 4\n.lcomm b, 8",
             vec![
                 Token::DotComm,
@@ -451,7 +458,7 @@ mod tests {
             DotLong, Integer(70000), Token::Eol,
         ];
 
-        test_str(str, tokens);
+        test_str_tokens(str, tokens);
     }
 
     #[test]
@@ -479,12 +486,12 @@ mod tests {
             Token::DotSection, Token::Symbol(String::from(".bss")), Token::Eol,
             Token::DotLcomm, Token::Symbol(String::from("buffer")), Token::Comma, Token::Integer(16), Token::Eol,
         ];
-        test_str(str, tokens);
+        test_str_tokens(str, tokens);
     }
 
     #[test]
     fn test_simple_instruction() {
-        test_str(
+        test_str_tokens(
             "main:\npusha\npushf\nint $0x80\njmp *0x1234",
             vec![
                 Token::Symbol(String::from("main")), Token::Colon, Token::Eol,
@@ -500,7 +507,7 @@ mod tests {
 
     #[test]
     fn test_instruction_with_size() {
-        test_str(
+        test_str_tokens(
             "pushb $0x10\npush %eax\nmovl %ebx, %cs:0x01(%eax, %ebx, 2)",
             vec![
                 Token::Mnemonic(String::from("push"), Some(Size::Byte)), Token::Dollar, Token::Integer(0x10), Token::Eol,
@@ -518,44 +525,46 @@ mod tests {
 
     #[test]
     fn test_last_token_info() {
-        let cursor = Cursor::new(".section .text\nmovl %eax, %ecx");
-        let mut scanner = Scanner::new(cursor);
-
-        assert_eq!(scanner.next(), Some(Token::DotSection));
-        assert_eq!(scanner.last_token_info(), (1, 1, ".section"));
-
-        assert_eq!(scanner.next(), Some(Token::Symbol(String::from(".text"))));
-        assert_eq!(scanner.last_token_info(), (1, 10, ".text"));
-
-        assert_eq!(scanner.next(), Some(Token::Eol));
-
-        assert_eq!(scanner.next(), Some(Token::Mnemonic(String::from("mov"), Some(Size::DoubleWord))));
-        assert_eq!(scanner.last_token_info(), (2, 1, "movl"));
-
-        assert_eq!(scanner.next(), Some(Token::Register(String::from("eax"))));
-        assert_eq!(scanner.last_token_info(), (2, 6, "%eax"));
-
-        assert_eq!(scanner.next(), Some(Token::Comma));
-        assert_eq!(scanner.last_token_info(), (2, 10, ","));
-
-        assert_eq!(scanner.next(), Some(Token::Register(String::from("ecx"))));
-        assert_eq!(scanner.last_token_info(), (2, 12, "%ecx"));
-
-        assert_eq!(scanner.next(), Some(Token::Eol));
-
-        assert_eq!(scanner.next(), None);
+        test_str_token_infos(
+            ".section .text\nmovl %eax, %ecx",
+            vec![
+                (Token::DotSection, 1, String::from(".section")),
+                (Token::Symbol(String::from(".text")), 1, String::from(".text")),
+                (Token::Eol, 1, String::from("")),
+                (Token::Mnemonic(String::from("mov"), Some(Size::DoubleWord)), 2, String::from("movl")),
+                (Token::Register(String::from("eax")), 2, String::from("%eax")),
+                (Token::Comma, 2, String::from(",")),
+                (Token::Register(String::from("ecx")), 2, String::from("%ecx")),
+                (Token::Eol, 2, String::from("")),
+            ]
+        );
     }
 
     #[test]
-    fn test_err() {
-        let cursor = Cursor::new("%abc");
-        let mut scanner = Scanner::new(cursor);
+    fn test_err_unknown_symbol() {
+        test_str_tokens(
+            "%abc %eax",
+            vec![
+                Token::Err(Error::UnknownSymbol(1, String::from("%abc"))),
+                Token::Register(String::from("eax")),
+                Token::Eol,
+            ]
+        );
+    }
 
-        assert_eq!(scanner.next(), Some(Token::Err(Error::UnknownSymbol)));
-        assert_eq!(scanner.last_token_info(), (1, 1, "%abc"));
-
-        assert_eq!(scanner.next(), Some(Token::Eol));
-        assert_eq!(scanner.next(), None);
+    #[test]
+    fn test_err_parse_int() {
+        test_str_tokens(
+            ".int 999999999999999999999999999999999999999999999999999999999999999999999999999999999999",
+            vec![
+                Token::DotLong,
+                Token::Err(Error::ParseIntFail(
+                    1,
+                    String::from("999999999999999999999999999999999999999999999999999999999999999999999999999999999999")
+                )),
+                Token::Eol,
+            ]
+        );
     }
 
 }

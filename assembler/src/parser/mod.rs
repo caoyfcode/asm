@@ -8,26 +8,27 @@ use self::scanner::{Scanner, Token};
 
 mod scanner;
 
-/// 对一个 `Option<Token>` 或 `Option<&Token>`进行模式匹配, 匹配特定的 `Some(Token)` 或 `Some(&Token)`, 并返回一个 `Result<T, crate::common::Error>`
+/// 对一个 `(Token, usize, String)>` 或 `&(Token, usize, String)` 进行模式匹配, 匹配特定的 `Token`, 并返回一个 `Result<T, crate::common::Error>`, 在不匹配时返回 `Err(Error)`
 ///
 /// 参数为:
-/// - 进行匹配的 `Option<Token>` 或 `Option<&Token>`
+/// - 进行匹配的 `(Token, usize, String)>` 或 `&(Token, usize, String)`
+/// - 期望的符号的描述, 用于匹配失败时的错误信息
 /// - 逗号分隔的模式列表, 若要返回值, 使用 `<pat> => <expr>` 形式, 不返回值则使用 `<pat>`, 要返回的值会包裹到 `Result` 中
 macro_rules! match_token {
-    ($t:expr, $($pat:pat => $out:expr),+ $(,)?) => {
+    ($t:expr, $expected:expr, $($pat:pat => $out:expr),+ $(,)?) => {
         match $t {
             #[allow(unreachable_code)]
-            $(Some($pat) => Ok($out),)+
-            Some(Token::Err(err)) => Err(err.clone()),
-            _ => Err($crate::common::Error::UnexpectedSymbol),
+            $(($pat, ..) => Ok($out),)+
+            (Token::Err(err), ..) => Err(err.clone()),
+            (_, line, found) => Err($crate::common::Error::UnexpectedSymbol(line.clone(), String::from($expected), String::from(found))),
         }
     };
-    ($t:expr, $($pat:pat),+ $(,)?) => {
+    ($t:expr, $expected:expr, $($pat:pat),+ $(,)?) => {
         match $t {
             #[allow(unreachable_code)]
-            $(Some($pat) => Ok(()),)+
-            Some(Token::Err(err)) => Err(err.clone()),
-            _ => Err($crate::common::Error::UnexpectedSymbol),
+            $(($pat, ..) => Ok(()),)+
+            (Token::Err(err), ..) => Err(err.clone()),
+            (_, line, found) => Err($crate::common::Error::UnexpectedSymbol(line.clone(), String::from($expected), String::from(found))),
         }
     };
 }
@@ -36,7 +37,7 @@ type Result<T> = core::result::Result<T, Error>;
 
 pub struct Parser<R: BufRead> {
     scanner: Scanner<R>,
-    lookahead: Option<Token>,  // 储存向前看的一个符号, 但是不要直接使用, 应用 lookahead(), next_token() 代替
+    lookahead: Option<(Token, usize, String)>,  // 储存向前看的一个符号, 但是不要直接使用, 应用 lookahead(), next_token() 代替
 }
 
 impl<R: BufRead> Parser<R> {
@@ -51,14 +52,15 @@ impl<R: BufRead> Parser<R> {
         Ok(Ast::new(self.program()?))
     }
 
-    fn lookahead(&mut self) -> Option<&Token> {
+    // 返回符号, 行号, 符号内容
+    fn lookahead(&mut self) -> Option<&(Token, usize, String)> {
         if self.lookahead.is_none() {
             self.lookahead = self.scanner.next();
         }
         self.lookahead.as_ref()
     }
 
-    fn next_token(&mut self) -> Option<Token> {
+    fn next_token(&mut self) -> Option<(Token, usize, String)> {
         match self.lookahead {
             Some(_) => self.lookahead.take(),
             None => self.scanner.next(),
@@ -70,9 +72,9 @@ impl<R: BufRead> Parser<R> {
 
         while self.lookahead().is_some() {
             let mut should_match_eol = true;
-            let line = self.scanner.last_token_info().0;
+            let line = self.lookahead().unwrap().1;
             match_token!(
-                self.lookahead(),
+                self.lookahead().unwrap(), "pseudo or instruction or label",
                 Token::DotSection => items.push(
                     (ProgramItem::PseudoSection(self.pseudo_section()?), line)
                 ),
@@ -104,7 +106,10 @@ impl<R: BufRead> Parser<R> {
                 Token::Eol => (),
             )?;
             if should_match_eol {
-                match_token!(self.next_token(), Token::Eol)?;
+                match_token!(
+                    self.next_token().unwrap(), "Eol",
+                    Token::Eol,
+                )?;
             }
         }
 
@@ -112,47 +117,47 @@ impl<R: BufRead> Parser<R> {
     }
 
     fn pseudo_section(&mut self) -> Result<PseudoSectionNode> {
-        match_token!(self.next_token(), Token::DotSection)?;
+        self.next_token();
         match_token!(
-            self.next_token(),
+            self.next_token().unwrap(), "symbol",
             Token::Symbol(symbol) => PseudoSectionNode { symbol },
         )
     }
 
     fn pseudo_global(&mut self) -> Result<PseudoGlobalNode> {
-        match_token!(self.next_token(), Token::DotGlobal)?;
+        self.next_token();
         match_token!(
-            self.next_token(),
+            self.next_token().unwrap(), "symbol",
             Token::Symbol(symbol) => PseudoGlobalNode { symbol },
         )
     }
 
     fn pseudo_equ(&mut self) -> Result<PseudoEquNode> {
-        match_token!(self.next_token(), Token::DotEqu)?;
+        self.next_token();
         let symbol = match_token!(
-            self.next_token(),
+            self.next_token().unwrap(), "symbol",
             Token::Symbol(symbol) => symbol,
         )?;
-        match_token!(self.next_token(), Token::Comma)?;
+        match_token!(self.next_token().unwrap(), "\",\"", Token::Comma)?;
         let value = match_token!(
-            self.next_token(),
+            self.next_token().unwrap(), "integer",
             Token::Integer(value) => value,
         )?;
         Ok(PseudoEquNode { symbol, value })
     }
 
     fn pseudo_fill(&mut self) -> Result<PseudoFillNode> {
-        match_token!(self.next_token(), Token::DotFill)?;
+        self.next_token();
         let repeat = match_token!(
-            self.next_token(),
+            self.next_token().unwrap(), "integer",
             Token::Integer(value) => value,
         )?;
-        match_token!(self.next_token(), Token::Comma)?;
+        match_token!(self.next_token().unwrap(), "\",\"", Token::Comma)?;
         let size = match_token!(
-            self.next_token(),
+            self.next_token().unwrap(), "integer",
             Token::Integer(value) => value,
         )?;
-        match_token!(self.next_token(), Token::Comma)?;
+        match_token!(self.next_token().unwrap(), "\",\"", Token::Comma)?;
         let value = self.value()?;
 
         Ok(PseudoFillNode { repeat, size, value })
@@ -160,7 +165,7 @@ impl<R: BufRead> Parser<R> {
 
     fn value(&mut self) -> Result<ValueNode> {
         match_token!(
-            self.next_token(),
+            self.next_token().unwrap(), "integer or symbol",
             Token::Integer(value) => ValueNode::Integer(value),
             Token::Symbol(symbol) => ValueNode::Symbol(symbol),
         )
@@ -168,14 +173,14 @@ impl<R: BufRead> Parser<R> {
 
     fn pseudo_integer(&mut self) -> Result<PseudoIntegerNode> {
         let size = match_token!(
-            self.next_token(),
+            self.next_token().unwrap(), "",
             Token::DotByte => Size::Byte,
             Token::DotWord => Size::Word,
             Token::DotLong => Size::DoubleWord,
         )?;
         let mut values = Vec::new();
         values.push(self.value()?);
-        while self.lookahead().is_some() && self.lookahead().unwrap() == &Token::Comma {
+        while self.lookahead().unwrap().0 == Token::Comma {
             self.next_token();
             values.push(self.value()?);
         }
@@ -184,12 +189,12 @@ impl<R: BufRead> Parser<R> {
 
     fn pseudo_string(&mut self) -> Result<PseudoStringNode> {
         let zero_end = match_token!(
-            self.next_token(),
+            self.next_token().unwrap(), "",
             Token::DotAscii => false,
             Token::DotAsciz => true,
         )?;
         let content = match_token!(
-            self.next_token(),
+            self.next_token().unwrap(), "string",
             Token::String(str) => str,
         )?;
         Ok(PseudoStringNode { zero_end, content })
@@ -197,39 +202,33 @@ impl<R: BufRead> Parser<R> {
 
     fn pseudo_comm(&mut self) -> Result<PseudoCommNode> {
         let is_local = match_token!(
-            self.next_token(),
+            self.next_token().unwrap(), "",
             Token::DotLcomm => true,
             Token::DotComm => false,
         )?;
         let symbol = match_token!(
-            self.next_token(),
+            self.next_token().unwrap(), "symbol",
             Token::Symbol(symbol) => symbol,
         )?;
-        match_token!(self.next_token(), Token::Comma)?;
+        match_token!(self.next_token().unwrap(), "\",\"", Token::Comma)?;
         let length = self.value()?;
         Ok(PseudoCommNode { is_local, symbol, length })
     }
 
     fn instruction(&mut self) -> Result<InstructionNode> {
         let (mnemonic, operand_size) = match_token!(
-            self.next_token(),
+            self.next_token().unwrap(), "",
             Token::Mnemonic(mnemonic, operand_size) => (mnemonic, operand_size),
         )?;
         let mut operands = Vec::new();
 
         if instruction::is_jump(&mnemonic) { // jump instruction
             operands.push(self.jump_operand()?);
-        } else { // none-jump instruction
-            let has_operand = match self.lookahead() {
-                Some(Token::Dollar | Token::Register(_) | Token::Symbol(_) | Token::Integer(_) | Token::Lparen) => true,
-                _ => false,
-            };
-            if has_operand {
-                operands.push(self.none_jump_operand()?); // first operand
-                while self.lookahead().is_some() && self.lookahead().unwrap() == &Token::Comma {
-                    self.next_token();
-                    operands.push(self.none_jump_operand()?);
-                }
+        } else if self.lookahead().unwrap().0 != Token::Eol { // none-jump instruction has operand
+            operands.push(self.none_jump_operand()?); // first operand
+            while self.lookahead().unwrap().0 == Token::Comma {
+                self.next_token();
+                operands.push(self.none_jump_operand()?);
             }
         }
 
@@ -238,7 +237,7 @@ impl<R: BufRead> Parser<R> {
 
     fn jump_operand(&mut self) -> Result<OperandNode> {
         match_token!(
-            self.lookahead(),
+            self.lookahead().unwrap(), "jump operand",
             Token::Symbol(_) | Token::Integer(_) => OperandNode::Immediate(self.value()?),
             Token::Star => {
                 self.next_token();
@@ -249,7 +248,7 @@ impl<R: BufRead> Parser<R> {
 
     fn none_jump_operand(&mut self) -> Result<OperandNode> {
         match_token!(
-            self.lookahead(),
+            self.lookahead().unwrap(), "operand",
             Token::Dollar => {
                 self.next_token();
                 OperandNode::Immediate(self.value()?)
@@ -260,11 +259,11 @@ impl<R: BufRead> Parser<R> {
 
     fn register_or_mem_operand(&mut self) -> Result<OperandNode> {
         match_token!(
-            self.lookahead(),
+            self.lookahead().unwrap(), "register or mem operand",
             Token::Register(_) => {
                 let reg = self.register()?;
-                match self.lookahead() {
-                    Some(Token::Colon) => {
+                match self.lookahead().unwrap().0 {
+                    Token::Colon => {
                         self.next_token();
                         OperandNode::Memory(self.mem()?, Some(reg))
                     },
@@ -277,64 +276,64 @@ impl<R: BufRead> Parser<R> {
 
     fn register(&mut self) -> Result<RegisterNode> {
         match_token!(
-            self.next_token(),
+            self.next_token().unwrap(), "register",
             Token::Register(name) => RegisterNode { name }
         )
     }
 
     fn mem(&mut self) -> Result<MemNode> {
         let offset = match_token!(
-            self.lookahead(),
+            self.lookahead().unwrap(), "mem operand",
             Token::Symbol(_) | Token::Integer(_) => Some(self.value()?),
             Token::Lparen => None,
         )?;
 
-        match self.lookahead() {
-            Some(Token::Lparen) => {
+        match self.lookahead().unwrap().0 {
+            Token::Lparen => {
                 self.next_token();
             },
             _ => return Ok(MemNode { offset, base: None, index_scale: None}),
         }
 
         let base = match_token!(
-            self.lookahead(),
+            self.lookahead().unwrap(), "base register",
             Token::Register(_) => Some(self.register()?),
             Token::Comma => None,
         )?;
 
         match_token!(
-            self.next_token(),
+            self.next_token().unwrap(), "\")\" or \",\"",
             Token::Rparen => return Ok(MemNode { offset, base, index_scale: None}),
             Token::Comma => (),
         )?;
 
         let index = match_token!(
-            self.lookahead(),
+            self.lookahead().unwrap(), "index register",
             Token::Register(_) => self.register()?,
         )?;
 
         match_token!(
-            self.next_token(),
+            self.next_token().unwrap(), "\")\" or \",\"",
             Token::Rparen => return Ok(MemNode { offset, base, index_scale: Some((index, 1))}),
             Token::Comma => (),
         )?;
 
         let scale = match_token!(
-            self.next_token(),
+            self.next_token().unwrap(), "scale value",
             Token::Integer(value) => value,
         )?;
 
-        match_token!(self.next_token(), Token::Rparen)?;
+        match_token!(self.next_token().unwrap(), "\")\"", Token::Rparen)?;
 
         Ok(MemNode { offset, base, index_scale: Some((index, scale)) })
     }
 
     fn label(&mut self) -> Result<LabelNode> {
         let label = match_token!(
-            self.next_token(),
+            self.next_token().unwrap(), "symbol",
             Token::Symbol(symbol) => symbol,
         )?;
-        match_token!(self.next_token(), Token::Colon)?;
+        match_token!(self.next_token().unwrap(), "\":\"", Token::Colon)?;
         Ok(LabelNode { label })
     }
 }
@@ -395,7 +394,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic]
+    #[should_panic="8: error: expected operand, but found \"\""]
     fn test_syntex_error_comma() {
         let code = r#"
         main:
@@ -410,7 +409,10 @@ mod tests {
         "#.trim();
         let cursor = Cursor::new(code);
         let mut parser = Parser::new(cursor);
-        parser.build_ast().unwrap();
+        match parser.build_ast() {
+            Err(error) => panic!("{}", error),
+            _ => (),
+        }
     }
 
     #[test]
