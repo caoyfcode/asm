@@ -112,9 +112,9 @@ pub struct RegisterNode {
 }
 
 pub struct MemNode {
+    pub displacement: Option<ValueNode>, // 立即数偏移
     pub base: Option<RegisterNode>, // 基址寄存器
     pub index_scale: Option<(RegisterNode, u32)>, // 变址寄存器, scale 必须为 1, 2, 4, 8
-    pub offset: Option<ValueNode>, // 立即数偏移
 }
 
 pub struct LabelNode {

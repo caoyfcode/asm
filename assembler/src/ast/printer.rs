@@ -160,9 +160,9 @@ impl Visitor for AstPrinter {
         writeln!(self.buf, "mem").unwrap();
         self.inc_depth();
 
-        if let Some(offset) = &node.offset {
+        if let Some(offset) = &node.displacement {
             self.write_indent();
-            writeln!(self.buf, "offset").unwrap();
+            writeln!(self.buf, "displacement").unwrap();
             self.inc_depth();
             offset.accept(self);
             self.dec_depth();
@@ -225,7 +225,7 @@ mod tests {
                                         RegisterNode {name: String::from("ebx")},
                                         1
                                     )),
-                                    offset: Some(
+                                    displacement: Some(
                                         ValueNode::Integer(4)
                                     )
                                 },

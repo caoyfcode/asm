@@ -282,7 +282,7 @@ impl<R: BufRead> Parser<R> {
     }
 
     fn mem(&mut self) -> Result<MemNode> {
-        let offset = match_token!(
+        let displacement = match_token!(
             self.lookahead().unwrap(), "mem operand",
             TokenKind::Symbol(_) | TokenKind::Integer(_) => Some(self.value()?),
             TokenKind::Lparen => None,
@@ -292,7 +292,7 @@ impl<R: BufRead> Parser<R> {
             TokenKind::Lparen => {
                 self.next_token();
             },
-            _ => return Ok(MemNode { offset, base: None, index_scale: None}),
+            _ => return Ok(MemNode { displacement, base: None, index_scale: None}),
         }
 
         let base = match_token!(
@@ -303,7 +303,7 @@ impl<R: BufRead> Parser<R> {
 
         match_token!(
             self.next_token().unwrap(), "\")\" or \",\"",
-            TokenKind::Rparen => return Ok(MemNode { offset, base, index_scale: None}),
+            TokenKind::Rparen => return Ok(MemNode { displacement, base, index_scale: None}),
             TokenKind::Comma => (),
         )?;
 
@@ -314,7 +314,7 @@ impl<R: BufRead> Parser<R> {
 
         match_token!(
             self.next_token().unwrap(), "\")\" or \",\"",
-            TokenKind::Rparen => return Ok(MemNode { offset, base, index_scale: Some((index, 1))}),
+            TokenKind::Rparen => return Ok(MemNode { displacement, base, index_scale: Some((index, 1))}),
             TokenKind::Comma => (),
         )?;
 
@@ -325,7 +325,7 @@ impl<R: BufRead> Parser<R> {
 
         match_token!(self.next_token().unwrap(), "\")\"", TokenKind::Rparen)?;
 
-        Ok(MemNode { offset, base, index_scale: Some((index, scale)) })
+        Ok(MemNode { displacement, base, index_scale: Some((index, scale)) })
     }
 
     fn label(&mut self) -> Result<LabelNode> {
