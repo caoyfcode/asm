@@ -7,7 +7,7 @@ use crate::common::{Size, Error};
 use crate::instruction::{mnemonics_without_size, mnemonics_with_size, registers};
 
 #[derive(Debug, PartialEq, Clone)]
-pub(super) enum Token {
+pub(super) enum TokenKind {
     // 伪指令
     DotSection, DotGlobal, DotEqu,
     DotFill, DotByte, DotWord, DotLong, DotAscii, DotAsciz,
@@ -29,6 +29,19 @@ pub(super) enum Token {
     Err(Error)
 }
 
+#[derive(Debug, PartialEq)]
+pub(super) struct Token {
+    pub kind: TokenKind,
+    pub line: usize, // 行号, 从 1 开始
+    pub content: String,
+}
+
+impl Token {
+    fn new(kind: TokenKind, line: usize, content: String) -> Self {
+        Self { kind, line, content }
+    }
+}
+
 macro_rules! regex_token_vec {
     ( $($r:expr => $t:expr),* $(,)? ) => {
         vec![
@@ -38,22 +51,22 @@ macro_rules! regex_token_vec {
 }
 
 lazy_static! {
-    static ref PSEUDOS: Vec<(Regex, Token)> = regex_token_vec![
-        r"^\.section\b" => Token::DotSection,
-        r"^\.(global|globl)\b" => Token::DotGlobal,
-        r"^\.(equ|set)\b" => Token::DotEqu,
-        r"^\.fill\b" => Token::DotFill,
-        r"^\.byte\b" => Token::DotByte,
-        r"^\.(word|short)\b" => Token::DotWord,
-        r"^\.(long|int)\b" => Token::DotLong,
-        r"^\.ascii\b" => Token::DotAscii,
-        r"^\.(asciz|string)\b" => Token::DotAsciz,
-        r"^\.comm\b" => Token::DotComm,
-        r"^\.lcomm\b" => Token::DotLcomm,
-        r"^\(" => Token::Lparen, r"^\)" => Token::Rparen,
-        "^:" => Token::Colon, "^," => Token::Comma,
-        r"^\$" => Token::Dollar, r"^\*" => Token::Star,
-        "^(#|;|//).*$" => Token::Comment,
+    static ref SIMPLE_TOKENS: Vec<(Regex, TokenKind)> = regex_token_vec![
+        r"^\.section\b" => TokenKind::DotSection,
+        r"^\.(global|globl)\b" => TokenKind::DotGlobal,
+        r"^\.(equ|set)\b" => TokenKind::DotEqu,
+        r"^\.fill\b" => TokenKind::DotFill,
+        r"^\.byte\b" => TokenKind::DotByte,
+        r"^\.(word|short)\b" => TokenKind::DotWord,
+        r"^\.(long|int)\b" => TokenKind::DotLong,
+        r"^\.ascii\b" => TokenKind::DotAscii,
+        r"^\.(asciz|string)\b" => TokenKind::DotAsciz,
+        r"^\.comm\b" => TokenKind::DotComm,
+        r"^\.lcomm\b" => TokenKind::DotLcomm,
+        r"^\(" => TokenKind::Lparen, r"^\)" => TokenKind::Rparen,
+        "^:" => TokenKind::Colon, "^," => TokenKind::Comma,
+        r"^\$" => TokenKind::Dollar, r"^\*" => TokenKind::Star,
+        "^(#|;|//).*$" => TokenKind::Comment,
     ];
 
     static ref MNEMONIC_WITHOUT_SIZE: Regex = {
@@ -148,15 +161,15 @@ impl<R: BufRead> Scanner<R> {
     }
 
     /// 从 cursor 位置匹配一个整数, 返回符号与其长度
-    fn match_integer(&self) -> Option<(Token, usize)> {
+    fn match_integer(&self) -> Option<(TokenKind, usize)> {
         let str = &self.buffer[self.cursor..];
         if let Some(cap) = INTEGER.captures(str) {
             if let Some(bin) = cap.name("bin") {
                 let end = bin.end();
                 return match u32::from_str_radix(&str[2..end], 2) {
-                    Ok(integer) => Some((Token::Integer(integer), end)),
+                    Ok(integer) => Some((TokenKind::Integer(integer), end)),
                     Err(_) => Some(( // 有可能过大无法转换
-                        Token::Err(Error::ParseIntFail(self.line, String::from(bin.as_str()))),
+                        TokenKind::Err(Error::ParseIntFail(self.line, String::from(bin.as_str()))),
                         end
                     )),
                 };
@@ -164,9 +177,9 @@ impl<R: BufRead> Scanner<R> {
             if let Some(oct) = cap.name("oct") {
                 let end = oct.end();
                 return match u32::from_str_radix(&str[0..end], 8) { // 0 被归到 8 进制
-                    Ok(integer) => Some((Token::Integer(integer), end)),
+                    Ok(integer) => Some((TokenKind::Integer(integer), end)),
                     Err(_) => Some(( // 有可能过大无法转换
-                        Token::Err(Error::ParseIntFail(self.line, String::from(oct.as_str()))),
+                        TokenKind::Err(Error::ParseIntFail(self.line, String::from(oct.as_str()))),
                         end
                     )),
                 };
@@ -174,9 +187,9 @@ impl<R: BufRead> Scanner<R> {
             if let Some(hex) = cap.name("hex") {
                 let end = hex.end();
                 return match u32::from_str_radix(&str[2..end], 16) {
-                    Ok(integer) => Some((Token::Integer(integer), end)),
+                    Ok(integer) => Some((TokenKind::Integer(integer), end)),
                     Err(_) => Some(( // 有可能过大无法转换
-                        Token::Err(Error::ParseIntFail(self.line, String::from(hex.as_str()))),
+                        TokenKind::Err(Error::ParseIntFail(self.line, String::from(hex.as_str()))),
                         end
                     )),
                 };
@@ -184,25 +197,25 @@ impl<R: BufRead> Scanner<R> {
             if let Some(dec) = cap.name("dec") {
                 let end = dec.end();
                 return match u32::from_str_radix(&str[0..end], 10) {
-                    Ok(integer) => Some((Token::Integer(integer), end)),
+                    Ok(integer) => Some((TokenKind::Integer(integer), end)),
                     Err(_) => Some(( // 有可能过大无法转换
-                        Token::Err(Error::ParseIntFail(self.line, String::from(dec.as_str()))),
+                        TokenKind::Err(Error::ParseIntFail(self.line, String::from(dec.as_str()))),
                         end
                     )),
                 };
             }
             if let Some(_) = cap.name("char") {
-                return Some((Token::Integer(str.bytes().nth(1).unwrap() as u32), 3));
+                return Some((TokenKind::Integer(str.bytes().nth(1).unwrap() as u32), 3));
             }
         }
         None
     }
 
     /// 从 cursor 位置匹配一个符号, 返回符号与其长度
-    fn matching(&self) -> (Token, usize) {
+    fn matching(&self) -> (TokenKind, usize) {
         let str = &self.buffer[self.cursor..];
         // pseudos
-        for (reg, token) in &*PSEUDOS {
+        for (reg, token) in &*SIMPLE_TOKENS {
             if let Some(m) = reg.find(str) {
                 return (token.clone(), m.end());
             }
@@ -211,7 +224,7 @@ impl<R: BufRead> Scanner<R> {
         if let Some(cap) = MNEMONIC_WITHOUT_SIZE.captures(str) {
             let end = cap.get(0).unwrap().end();
             return (
-                Token::Mnemonic(String::from(cap.name("mnemonic").unwrap().as_str()), None),
+                TokenKind::Mnemonic(String::from(cap.name("mnemonic").unwrap().as_str()), None),
                 end
             );
         }
@@ -226,7 +239,7 @@ impl<R: BufRead> Scanner<R> {
                 _ => None,
             };
             return (
-                Token::Mnemonic(String::from(mnemonic), size),
+                TokenKind::Mnemonic(String::from(mnemonic), size),
                 end
             );
         }
@@ -234,7 +247,7 @@ impl<R: BufRead> Scanner<R> {
         if let Some(cap) = REGISTER.captures(str) {
             let end = cap.get(0).unwrap().end();
             return (
-                Token::Register(String::from(cap.name("name").unwrap().as_str())),
+                TokenKind::Register(String::from(cap.name("name").unwrap().as_str())),
                 end
             );
         }
@@ -245,11 +258,11 @@ impl<R: BufRead> Scanner<R> {
         // string
         if let Some(m) = STRING.find(str) {
             let end = m.end();
-            return  (Token::String(String::from(&str[1..(end - 1)])), end);
+            return  (TokenKind::String(String::from(&str[1..(end - 1)])), end);
         }
         // symbol
         if let Some(m) = SYMBOL.find(str) {
-            return (Token::Symbol(String::from(m.as_str())), m.end());
+            return (TokenKind::Symbol(String::from(m.as_str())), m.end());
         }
         // err
         let mut err_symbol_len = 0;
@@ -259,13 +272,13 @@ impl<R: BufRead> Scanner<R> {
             }
             err_symbol_len += 1;
         }
-        (Token::Err(Error::UnknownSymbol(self.line, String::from(&str[..err_symbol_len]))), err_symbol_len)
+        (TokenKind::Err(Error::UnknownSymbol(self.line, String::from(&str[..err_symbol_len]))), err_symbol_len)
     }
 
 }
 
 impl<R: BufRead> Iterator for Scanner<R> {
-    type Item = (Token, usize, String); // 符号(除了Comment), 行号, 符号内容
+    type Item = Token; // 符号(除了Comment), 行号, 符号内容
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.end {
@@ -275,8 +288,9 @@ impl<R: BufRead> Iterator for Scanner<R> {
             self.read_line();
         }
         if self.cursor >= self.buffer.len() { // 一行已经匹配结束
+            let token = Token::new(TokenKind::Eol, self.line, String::new());
             self.read_line();
-            return Some((Token::Eol, self.line - 1, String::new())); // 每行结尾会插入一个 Eol
+            return Some(token); // 每行结尾会插入一个 Eol
         }
         let str = &self.buffer[self.cursor..];
         let trim_str = str.trim_start();
@@ -287,10 +301,10 @@ impl<R: BufRead> Iterator for Scanner<R> {
         let (token, size) = self.matching();
         let content = String::from(&self.buffer[self.cursor..self.cursor + size]);
         self.cursor +=  size;
-        if token == Token::Comment {
+        if token == TokenKind::Comment {
             self.next()
         } else {
-            Some((token, self.line, content))
+            Some(Token::new(token, self.line, content))
         }
     }
 }
@@ -299,22 +313,22 @@ impl<R: BufRead> Iterator for Scanner<R> {
 mod tests {
     use std::io::Cursor;
 
-    use crate::common::{Size, Error};
+    use crate::{common::{Size, Error}, parser::scanner::Token};
 
-    use super::{Scanner, Token};
+    use super::{Scanner, TokenKind};
 
-    fn test_str_tokens(str: &str, tokens: Vec<Token>) {
+    fn test_str_token_kinds(str: &str, tokens: Vec<TokenKind>) {
         let cursor = Cursor::new(str);
         let scanner = Scanner::new(cursor);
 
         let mut iter = tokens.into_iter();
-        for (token, ..) in scanner {
-            assert_eq!(Some(token), iter.next())
+        for Token {kind, ..} in scanner {
+            assert_eq!(Some(kind), iter.next())
         }
         assert_eq!(None, iter.next());
     }
 
-    fn test_str_token_infos(str: &str, items: Vec<(Token, usize, String)>) {
+    fn test_str_tokens(str: &str, items: Vec<Token>) {
         let cursor = Cursor::new(str);
         let scanner = Scanner::new(cursor);
 
@@ -327,86 +341,86 @@ mod tests {
 
     #[test]
     fn test_section_symbol() {
-        test_str_tokens(
+        test_str_token_kinds(
             ".section .text\n.section .data",
             vec![
-                Token::DotSection,
-                Token::Symbol(String::from(".text")),
-                Token::Eol,
-                Token::DotSection,
-                Token::Symbol(String::from(".data")),
-                Token::Eol,
+                TokenKind::DotSection,
+                TokenKind::Symbol(String::from(".text")),
+                TokenKind::Eol,
+                TokenKind::DotSection,
+                TokenKind::Symbol(String::from(".data")),
+                TokenKind::Eol,
             ]
         );
     }
 
     #[test]
     fn test_global_symbol() {
-        test_str_tokens(
+        test_str_token_kinds(
             ".global _start\n.globl main",
             vec![
-                Token::DotGlobal,
-                Token::Symbol(String::from("_start")),
-                Token::Eol,
-                Token::DotGlobal,
-                Token::Symbol(String::from("main")),
-                Token::Eol,
+                TokenKind::DotGlobal,
+                TokenKind::Symbol(String::from("_start")),
+                TokenKind::Eol,
+                TokenKind::DotGlobal,
+                TokenKind::Symbol(String::from("main")),
+                TokenKind::Eol,
             ]
         );
     }
 
     #[test]
     fn test_equ_symbol_comma_value() {
-        test_str_tokens(
+        test_str_token_kinds(
             ".equ len, 3\n.set a, len",
             vec![
-                Token::DotEqu,
-                Token::Symbol(String::from("len")),
-                Token::Comma,
-                Token::Integer(3),
-                Token::Eol,
-                Token::DotEqu,
-                Token::Symbol(String::from("a")),
-                Token::Comma,
-                Token::Symbol(String::from("len")),
-                Token::Eol,
+                TokenKind::DotEqu,
+                TokenKind::Symbol(String::from("len")),
+                TokenKind::Comma,
+                TokenKind::Integer(3),
+                TokenKind::Eol,
+                TokenKind::DotEqu,
+                TokenKind::Symbol(String::from("a")),
+                TokenKind::Comma,
+                TokenKind::Symbol(String::from("len")),
+                TokenKind::Eol,
             ]
         );
     }
 
     #[test]
     fn test_fill_repeat_size_value() {
-        test_str_tokens(
+        test_str_token_kinds(
             ".fill 3, 2, 0",
             vec![
-                Token::DotFill,
-                Token::Integer(3),
-                Token::Comma,
-                Token::Integer(2),
-                Token::Comma,
-                Token::Integer(0),
-                Token::Eol,
+                TokenKind::DotFill,
+                TokenKind::Integer(3),
+                TokenKind::Comma,
+                TokenKind::Integer(2),
+                TokenKind::Comma,
+                TokenKind::Integer(0),
+                TokenKind::Eol,
             ]
         );
     }
 
     #[test]
     fn test_data_section_integers() {
-        use Token::*;
+        use TokenKind::*;
         let str = r".byte 20, 22
                         .word 300
                         .short 300
                         .long 70000
                         .int 70000";
         let tokens = vec![
-            DotByte, Integer(20), Comma, Integer(22), Token::Eol,
-            DotWord, Integer(300), Token::Eol,
-            DotWord, Integer(300), Token::Eol,
-            DotLong, Integer(70000), Token::Eol,
-            DotLong, Integer(70000), Token::Eol,
+            DotByte, Integer(20), Comma, Integer(22), TokenKind::Eol,
+            DotWord, Integer(300), TokenKind::Eol,
+            DotWord, Integer(300), TokenKind::Eol,
+            DotLong, Integer(70000), TokenKind::Eol,
+            DotLong, Integer(70000), TokenKind::Eol,
         ];
 
-        test_str_tokens(str, tokens);
+        test_str_token_kinds(str, tokens);
     }
 
     #[test]
@@ -415,50 +429,50 @@ mod tests {
                         .asciz "hello"
                         .string "hello""#;
         let tokens = vec![
-            Token::DotAscii, Token::String(String::from("hello")), Token::Eol,
-            Token::DotAsciz, Token::String(String::from("hello")), Token::Eol,
-            Token::DotAsciz, Token::String(String::from("hello")), Token::Eol,
+            TokenKind::DotAscii, TokenKind::String(String::from("hello")), TokenKind::Eol,
+            TokenKind::DotAsciz, TokenKind::String(String::from("hello")), TokenKind::Eol,
+            TokenKind::DotAsciz, TokenKind::String(String::from("hello")), TokenKind::Eol,
         ];
 
-        test_str_tokens(str, tokens);
+        test_str_token_kinds(str, tokens);
     }
 
     #[test]
     fn test_bss_section_decalarations() {
-        test_str_tokens(
+        test_str_token_kinds(
             ".comm a, 4\n.lcomm b, 8",
             vec![
-                Token::DotComm,
-                Token::Symbol(String::from("a")),
-                Token::Comma,
-                Token::Integer(4),
-                Token::Eol,
-                Token::DotLcomm,
-                Token::Symbol(String::from("b")),
-                Token::Comma,
-                Token::Integer(8),
-                Token::Eol,
+                TokenKind::DotComm,
+                TokenKind::Symbol(String::from("a")),
+                TokenKind::Comma,
+                TokenKind::Integer(4),
+                TokenKind::Eol,
+                TokenKind::DotLcomm,
+                TokenKind::Symbol(String::from("b")),
+                TokenKind::Comma,
+                TokenKind::Integer(8),
+                TokenKind::Eol,
             ]
         );
     }
 
     #[test]
     fn test_comment() {
-        use Token::*;
+        use TokenKind::*;
         let str = r".byte 20, 22, 'h' # a byte
                         .word 300 # a word
                         .short 300 ; a word
                         .long 70000 // a long (double word)
                         .int 70000";
         let tokens = vec![
-            DotByte, Integer(20), Comma, Integer(22), Comma, Integer('h' as u32), Token::Eol,
-            DotWord, Integer(300), Token::Eol,
-            DotWord, Integer(300), Token::Eol,
-            DotLong, Integer(70000), Token::Eol,
-            DotLong, Integer(70000), Token::Eol,
+            DotByte, Integer(20), Comma, Integer(22), Comma, Integer('h' as u32), TokenKind::Eol,
+            DotWord, Integer(300), TokenKind::Eol,
+            DotWord, Integer(300), TokenKind::Eol,
+            DotLong, Integer(70000), TokenKind::Eol,
+            DotLong, Integer(70000), TokenKind::Eol,
         ];
 
-        test_str_tokens(str, tokens);
+        test_str_token_kinds(str, tokens);
     }
 
     #[test]
@@ -474,95 +488,95 @@ mod tests {
         .section .bss
         .lcomm buffer, 16"#.trim();
         let tokens = vec![
-            Token::DotSection, Token::Symbol(String::from(".text")), Token::Eol,
-            Token::DotGlobal, Token::Symbol(String::from("main")), Token::Eol,
-            Token::Symbol(String::from("main")), Token::Colon, Token::Eol,
-            Token::DotSection, Token::Symbol(String::from(".data")), Token::Eol,
-            Token::Symbol(String::from("hello")), Token::Colon,
-            Token::DotAsciz, Token::String(String::from("Hello, World")), Token::Eol,
-            Token::Symbol(String::from("num")), Token::Colon,
-            Token::DotLong, Token::Integer(0xf0), Token::Eol,
-            Token::DotEqu, Token::Symbol(String::from("haha")), Token::Comma, Token::Integer(0b1101), Token::Eol,
-            Token::DotSection, Token::Symbol(String::from(".bss")), Token::Eol,
-            Token::DotLcomm, Token::Symbol(String::from("buffer")), Token::Comma, Token::Integer(16), Token::Eol,
+            TokenKind::DotSection, TokenKind::Symbol(String::from(".text")), TokenKind::Eol,
+            TokenKind::DotGlobal, TokenKind::Symbol(String::from("main")), TokenKind::Eol,
+            TokenKind::Symbol(String::from("main")), TokenKind::Colon, TokenKind::Eol,
+            TokenKind::DotSection, TokenKind::Symbol(String::from(".data")), TokenKind::Eol,
+            TokenKind::Symbol(String::from("hello")), TokenKind::Colon,
+            TokenKind::DotAsciz, TokenKind::String(String::from("Hello, World")), TokenKind::Eol,
+            TokenKind::Symbol(String::from("num")), TokenKind::Colon,
+            TokenKind::DotLong, TokenKind::Integer(0xf0), TokenKind::Eol,
+            TokenKind::DotEqu, TokenKind::Symbol(String::from("haha")), TokenKind::Comma, TokenKind::Integer(0b1101), TokenKind::Eol,
+            TokenKind::DotSection, TokenKind::Symbol(String::from(".bss")), TokenKind::Eol,
+            TokenKind::DotLcomm, TokenKind::Symbol(String::from("buffer")), TokenKind::Comma, TokenKind::Integer(16), TokenKind::Eol,
         ];
-        test_str_tokens(str, tokens);
+        test_str_token_kinds(str, tokens);
     }
 
     #[test]
     fn test_simple_instruction() {
-        test_str_tokens(
+        test_str_token_kinds(
             "main:\npusha\npushf\nint $0x80\njmp *0x1234",
             vec![
-                Token::Symbol(String::from("main")), Token::Colon, Token::Eol,
-                Token::Mnemonic(String::from("pusha"), None), Token::Eol,
-                Token::Mnemonic(String::from("pushf"), None), Token::Eol,
-                Token::Mnemonic(String::from("int"), None), Token::Dollar,
-                Token::Integer(0x80), Token::Eol,
-                Token::Mnemonic(String::from("jmp"), None), Token::Star,
-                Token::Integer(0x1234), Token::Eol,
+                TokenKind::Symbol(String::from("main")), TokenKind::Colon, TokenKind::Eol,
+                TokenKind::Mnemonic(String::from("pusha"), None), TokenKind::Eol,
+                TokenKind::Mnemonic(String::from("pushf"), None), TokenKind::Eol,
+                TokenKind::Mnemonic(String::from("int"), None), TokenKind::Dollar,
+                TokenKind::Integer(0x80), TokenKind::Eol,
+                TokenKind::Mnemonic(String::from("jmp"), None), TokenKind::Star,
+                TokenKind::Integer(0x1234), TokenKind::Eol,
             ]
         );
     }
 
     #[test]
     fn test_instruction_with_size() {
-        test_str_tokens(
+        test_str_token_kinds(
             "pushb $0x10\npush %eax\nmovl %ebx, %cs:0x01(%eax, %ebx, 2)",
             vec![
-                Token::Mnemonic(String::from("push"), Some(Size::Byte)), Token::Dollar, Token::Integer(0x10), Token::Eol,
-                Token::Mnemonic(String::from("push"), None), Token::Register(String::from("eax")), Token::Eol,
-                Token::Mnemonic(String::from("mov"), Some(Size::DoubleWord)),
-                Token::Register(String::from("ebx")),Token::Comma,
-                Token::Register(String::from("cs")), Token::Colon, Token::Integer(0x01),
-                Token::Lparen, Token::Register(String::from("eax")), Token::Comma,
-                Token::Register(String::from("ebx")), Token::Comma, Token::Integer(2),
-                Token::Rparen,
-                Token::Eol,
+                TokenKind::Mnemonic(String::from("push"), Some(Size::Byte)), TokenKind::Dollar, TokenKind::Integer(0x10), TokenKind::Eol,
+                TokenKind::Mnemonic(String::from("push"), None), TokenKind::Register(String::from("eax")), TokenKind::Eol,
+                TokenKind::Mnemonic(String::from("mov"), Some(Size::DoubleWord)),
+                TokenKind::Register(String::from("ebx")),TokenKind::Comma,
+                TokenKind::Register(String::from("cs")), TokenKind::Colon, TokenKind::Integer(0x01),
+                TokenKind::Lparen, TokenKind::Register(String::from("eax")), TokenKind::Comma,
+                TokenKind::Register(String::from("ebx")), TokenKind::Comma, TokenKind::Integer(2),
+                TokenKind::Rparen,
+                TokenKind::Eol,
             ]
         );
     }
 
     #[test]
-    fn test_last_token_info() {
-        test_str_token_infos(
+    fn test_token_kind_and_info() {
+        test_str_tokens(
             ".section .text\nmovl %eax, %ecx",
             vec![
-                (Token::DotSection, 1, String::from(".section")),
-                (Token::Symbol(String::from(".text")), 1, String::from(".text")),
-                (Token::Eol, 1, String::from("")),
-                (Token::Mnemonic(String::from("mov"), Some(Size::DoubleWord)), 2, String::from("movl")),
-                (Token::Register(String::from("eax")), 2, String::from("%eax")),
-                (Token::Comma, 2, String::from(",")),
-                (Token::Register(String::from("ecx")), 2, String::from("%ecx")),
-                (Token::Eol, 2, String::from("")),
+                Token::new(TokenKind::DotSection, 1, String::from(".section")),
+                Token::new(TokenKind::Symbol(String::from(".text")), 1, String::from(".text")),
+                Token::new(TokenKind::Eol, 1, String::from("")),
+                Token::new(TokenKind::Mnemonic(String::from("mov"), Some(Size::DoubleWord)), 2, String::from("movl")),
+                Token::new(TokenKind::Register(String::from("eax")), 2, String::from("%eax")),
+                Token::new(TokenKind::Comma, 2, String::from(",")),
+                Token::new(TokenKind::Register(String::from("ecx")), 2, String::from("%ecx")),
+                Token::new(TokenKind::Eol, 2, String::from("")),
             ]
         );
     }
 
     #[test]
     fn test_err_unknown_symbol() {
-        test_str_tokens(
+        test_str_token_kinds(
             "%abc %eax",
             vec![
-                Token::Err(Error::UnknownSymbol(1, String::from("%abc"))),
-                Token::Register(String::from("eax")),
-                Token::Eol,
+                TokenKind::Err(Error::UnknownSymbol(1, String::from("%abc"))),
+                TokenKind::Register(String::from("eax")),
+                TokenKind::Eol,
             ]
         );
     }
 
     #[test]
     fn test_err_parse_int() {
-        test_str_tokens(
+        test_str_token_kinds(
             ".int 999999999999999999999999999999999999999999999999999999999999999999999999999999999999",
             vec![
-                Token::DotLong,
-                Token::Err(Error::ParseIntFail(
+                TokenKind::DotLong,
+                TokenKind::Err(Error::ParseIntFail(
                     1,
                     String::from("999999999999999999999999999999999999999999999999999999999999999999999999999999999999")
                 )),
-                Token::Eol,
+                TokenKind::Eol,
             ]
         );
     }
