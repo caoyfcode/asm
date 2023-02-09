@@ -53,19 +53,19 @@ pub fn registers() -> &'static [&'static str] {
 }
 
 /// 判断助记符是否是跳转指令, 在语法分析时用来确定操作数的语法
-pub fn is_jump(mnemonic: &str) -> bool {
+pub fn mnemonic_is_jump(mnemonic: &str) -> bool {
     JUMP_MNEMONICS.contains(&mnemonic)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::is_jump;
+    use super::mnemonic_is_jump;
 
     #[test]
     fn test_is_jump() {
-        assert!(is_jump("jmp"));
-        assert!(is_jump("call"));
-        assert!(is_jump("jne"));
-        assert!(!is_jump("mov"));
+        assert!(mnemonic_is_jump("jmp"));
+        assert!(mnemonic_is_jump("call"));
+        assert!(mnemonic_is_jump("jne"));
+        assert!(!mnemonic_is_jump("mov"));
     }
 }

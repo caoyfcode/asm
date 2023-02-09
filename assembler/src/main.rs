@@ -1,6 +1,6 @@
 mod common;
 mod ast;
-mod instruction;
+mod config;
 mod parser;
 
 fn main() {

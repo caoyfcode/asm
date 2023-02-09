@@ -4,7 +4,7 @@ use lazy_static::lazy_static;
 use regex::Regex;
 
 use crate::common::{Size, Error};
-use crate::instruction::{mnemonics_without_size, mnemonics_with_size, registers};
+use crate::config::{mnemonics_without_size, mnemonics_with_size, registers};
 
 #[derive(Debug, PartialEq, Clone)]
 pub(super) enum TokenKind {

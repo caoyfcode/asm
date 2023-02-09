@@ -1,7 +1,7 @@
 use std::io::BufRead;
 
 use crate::common::{Size, Error};
-use crate::instruction;
+use crate::config;
 use crate::ast::{Ast, ProgramNode, ProgramItem, InstructionNode, LabelNode, PseudoSectionNode, PseudoGlobalNode, PseudoEquNode, PseudoFillNode, PseudoIntegerNode, PseudoStringNode, PseudoCommNode, ValueNode, OperandNode, RegisterNode, MemNode};
 
 use self::scanner::{Scanner, TokenKind, Token};
@@ -222,7 +222,7 @@ impl<R: BufRead> Parser<R> {
         )?;
         let mut operands = Vec::new();
 
-        if instruction::is_jump(&mnemonic) { // jump instruction
+        if config::mnemonic_is_jump(&mnemonic) { // jump instruction
             operands.push(self.jump_operand()?);
         } else if self.lookahead().unwrap().kind != TokenKind::Eol { // none-jump instruction has operand
             operands.push(self.none_jump_operand()?); // first operand
