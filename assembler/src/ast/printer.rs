@@ -31,6 +31,7 @@ impl AstPrinter {
 }
 
 impl Visitor for AstPrinter {
+    type Return = ();
     fn visit_program(&mut self, node: &ProgramNode) {
         self.write_indent();
         writeln!(self.buf, "program").unwrap();
