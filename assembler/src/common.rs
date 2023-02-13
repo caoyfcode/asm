@@ -1,7 +1,17 @@
 /// 内存操作数的大小
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub enum Size {
     Byte, Word, DoubleWord,
+}
+
+impl Size {
+    pub fn length(&self) -> u32 {
+        match self {
+            Size::Byte => 1,
+            Size::Word => 2,
+            Size::DoubleWord => 4,
+        }
+    }
 }
 
 #[derive(Debug, PartialEq, Clone)]
