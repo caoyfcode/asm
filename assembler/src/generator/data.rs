@@ -1,8 +1,6 @@
 use crate::common::Size;
 
-use crate::generator::common::Value;
-
-use super::common::{Statement, RelocationInfo};
+use super::{Value, Statement, RelocationInfo};
 
 pub(super) struct Data {
     size: Size,

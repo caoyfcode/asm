@@ -1,11 +1,58 @@
-mod common;
 mod table;
 mod data;
 
-use crate::{ast::{Node, Visitor, ProgramNode, ProgramItem, InstructionNode, LabelNode, PseudoSectionNode, PseudoGlobalNode, PseudoEquNode, PseudoFillNode, PseudoIntegerNode, PseudoStringNode, PseudoCommNode, ValueNode, OperandNode, RegisterNode, MemNode}, common::Size};
+use crate::ast::{Node, Visitor, ProgramNode, ProgramItem, InstructionNode, LabelNode, PseudoSectionNode, PseudoGlobalNode, PseudoEquNode, PseudoFillNode, PseudoIntegerNode, PseudoStringNode, PseudoCommNode, ValueNode, OperandNode, RegisterNode, MemNode};
+use crate::common::Size;
 
-use self::{table::{SymbolTable, SymbolKind}, data::Data, common::{Section, Value, Statement, RelocationInfo}};
+use table::{SymbolTable, SymbolKind};
+use data::Data;
 
+/// .section 声明的节
+#[derive(PartialEq, Clone, Copy)]
+enum Section {
+    Text,
+    Data,
+    Bss,
+}
+
+impl Section {
+    fn from(name: &str) -> Option<Self> {
+        match name {
+            ".text" => Some(Self::Text),
+            ".data" => Some(Self::Data),
+            ".bss" => Some(Self::Bss),
+            _ => None,
+        }
+    }
+
+    fn name(&self) -> &'static str {
+        match self {
+            Section::Text => ".text",
+            Section::Data => ".data",
+            Section::Bss => ".bss",
+        }
+    }
+}
+
+/// 表示一条指令或数据定义
+trait Statement {
+    fn length(&self) -> u32;
+    fn emit(&self) -> (Vec<u8>, Vec<RelocationInfo>);
+}
+
+/// 用于在 Statement 中表示数值或标签或外部符号
+enum Value {
+    Integer(u32), // 可以确定的数值
+    Symbol(String, u32, bool), // 标签或外部符号, (name, addend, is_relative)
+}
+
+struct RelocationInfo {
+    offset: u32, // 重定位地址
+    name: String, // 重定位符号名
+    is_relative: bool, // 是则 R_386_PC32, 否则 R_386_32
+}
+
+/// 用于访问语法树生成目标文件
 struct Generator {
     data_section: Vec<Data>,
     table: SymbolTable,
@@ -123,7 +170,7 @@ impl Visitor for Generator {
         self.data_section.push(data);
     }
 
-    fn visit_value(&mut self, node: &ValueNode) -> Self::Return {
+    fn visit_value(&mut self, _node: &ValueNode) -> Self::Return {
         panic!("shouldn't visit ValueNode")
     }
 
@@ -156,27 +203,27 @@ impl Visitor for Generator {
         self.data_section.push(data);
     }
 
-    fn visit_pseudo_comm(&mut self, node: &PseudoCommNode) -> Self::Return {
+    fn visit_pseudo_comm(&mut self, _node: &PseudoCommNode) -> Self::Return {
         panic!("{}: error: not support .comm/.lcomm", self.line);
     }
 
-    fn visit_instruction(&mut self, node: &InstructionNode) -> Self::Return {
+    fn visit_instruction(&mut self, _node: &InstructionNode) -> Self::Return {
         if self.current_section != Some(Section::Text) {
             panic!("{}: error: not in .text section", self.line);
         }
         println!("{}: warn: ignore instruction", self.line);
     }
 
-    fn visit_operand(&mut self, node: &OperandNode) -> Self::Return {
-        todo!()
+    fn visit_operand(&mut self, _node: &OperandNode) -> Self::Return {
+        panic!("shouldn't visit OperandNode")
     }
 
-    fn visit_register(&mut self, node: &RegisterNode) -> Self::Return {
-        todo!()
+    fn visit_register(&mut self, _node: &RegisterNode) -> Self::Return {
+        panic!("shouldn't visit RegisterNode")
     }
 
-    fn visit_mem(&mut self, node: &MemNode) -> Self::Return {
-        todo!()
+    fn visit_mem(&mut self, _node: &MemNode) -> Self::Return {
+        panic!("shouldn't visit MemNode")
     }
 
     fn visit_label(&mut self, node: &LabelNode) -> Self::Return {
