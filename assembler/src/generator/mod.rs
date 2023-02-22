@@ -3,6 +3,7 @@ mod data;
 
 use crate::ast::{Node, Visitor, ProgramNode, ProgramItem, InstructionNode, LabelNode, PseudoSectionNode, PseudoGlobalNode, PseudoEquNode, PseudoFillNode, PseudoIntegerNode, PseudoStringNode, PseudoCommNode, ValueNode, OperandNode, RegisterNode, MemNode};
 use crate::common::Size;
+use crate::config::{self, OperandEncoding, RegisterKind, RegisterInfo};
 
 use table::{SymbolTable, SymbolKind};
 use data::Data;
@@ -207,11 +208,21 @@ impl Visitor for Generator {
         panic!("{}: error: not support .comm/.lcomm", self.line);
     }
 
-    fn visit_instruction(&mut self, _node: &InstructionNode) -> Self::Return {
+    fn visit_instruction(&mut self, node: &InstructionNode) -> Self::Return {
         if self.current_section != Some(Section::Text) {
             panic!("{}: error: not in .text section", self.line);
         }
-        println!("{}: warn: ignore instruction", self.line);
+        let infos = match config::infos_of_instruction(&node.mnemonic) {
+            Some(infos) => infos,
+            None => panic!("{}: error: no such instruction \"{}\"", self.line, node.mnemonic)
+        };
+        for info in infos {
+            if info.operand_encoding.matching(&node.operands) {
+                println!("{}: operand encoding is {:?}", self.line, info.operand_encoding);
+                return;
+            }
+        }
+        panic!("{}: error: unknown operands of \"{}\"", self.line, node.mnemonic)
     }
 
     fn visit_operand(&mut self, _node: &OperandNode) -> Self::Return {
@@ -236,6 +247,96 @@ impl Visitor for Generator {
         }
     }
 
+}
+
+impl OperandEncoding {
+    fn matching(&self, operands: &Vec<OperandNode>) -> bool {
+        match self {
+            OperandEncoding::Zero => operands.len() == 0,
+            OperandEncoding::Opcode => operands.len() == 1 && operands[0].is_reg(),
+            OperandEncoding::ImpliedSreg(name) => operands.len() == 1 && operands[0].is_register_of_name(name),
+            OperandEncoding::Rm => operands.len() == 1 && operands[0].is_rm(),
+            OperandEncoding::Reg => operands.len() == 1 && operands[0].is_reg(),
+            OperandEncoding::Imm => operands.len() == 1 && operands[0].is_imm(),
+            OperandEncoding::Rel => operands.len() == 1 && operands[0].is_imm(),
+            OperandEncoding::RegRm => operands.len() == 2 && operands[0].is_reg() && operands[1].is_rm(),
+            OperandEncoding::RmReg => operands.len() == 2 && operands[0].is_rm() && operands[1].is_reg(),
+            OperandEncoding::MoffsA => operands.len() == 2 && operands[0].is_imm() && operands[1].is_register_a(),
+            OperandEncoding::AMoffs => operands.len() == 2 && operands[0].is_register_a() && operands[1].is_imm(),
+            OperandEncoding::ImmOpcode => operands.len() == 2 && operands[0].is_imm() && operands[1].is_reg(),
+            OperandEncoding::ImmRm => operands.len() == 2 && operands[0].is_imm() && operands[1].is_rm(),
+            OperandEncoding::MemReg => operands.len() == 2 && operands[0].is_mem() && operands[1].is_reg(),
+            OperandEncoding::ImmA => operands.len() == 2 && operands[0].is_imm() && operands[1].is_register_a(),
+            OperandEncoding::SregRm => operands.len() == 2 && operands[0].is_sreg() && operands[1].is_rm(),
+            OperandEncoding::RmSreg => operands.len() == 2 && operands[0].is_rm() && operands[1].is_sreg(),
+        }
+    }
+
+}
+
+impl OperandNode {
+    fn get_reg(&self) -> Option<&'static RegisterInfo> {
+        if let OperandNode::Register(reg) = self {
+            config::info_of_register(&reg.name)
+        } else {
+            None
+        }
+    }
+
+    /// 是否是通用寄存器
+    fn is_reg(&self) -> bool {
+        if let OperandNode::Register(reg) = self {
+            if let Some(info) = config::info_of_register(&reg.name) {
+                return info.kind == RegisterKind::GeneralPurpose;
+            }
+        }
+        false
+    }
+
+    fn is_sreg(&self) -> bool {
+        if let OperandNode::Register(reg) = self {
+            if let Some(info) = config::info_of_register(&reg.name) {
+                return info.kind == RegisterKind::Segment;
+            }
+        }
+        false
+    }
+
+    // 是否是以 name 为名字的寄存器(任何类型寄存器)
+    fn is_register_of_name(&self, name: &str) -> bool {
+        if let OperandNode::Register(reg) = self {
+            return &reg.name == name;
+        }
+        false
+    }
+
+    fn is_register_a(&self) -> bool {
+        if let OperandNode::Register(reg) = self {
+            return match &reg.name[..] {
+                "al" | "ax" | "eax" => true,
+                _ => false,
+            };
+        }
+        false
+    }
+
+    fn is_rm(&self) -> bool {
+        self.is_reg() || self.is_mem()
+    }
+
+    fn is_imm(&self) -> bool {
+        match self {
+            OperandNode::Immediate(_) => true,
+            _ => false,
+        }
+    }
+
+    fn is_mem(&self) -> bool {
+        match self {
+            OperandNode::Memory(..) => true,
+            _ => false,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -291,5 +392,33 @@ mod tests {
         for rel in data_rel {
             println!("0x{:x}\t{}\t{}", rel.offset, rel.name, rel.is_relative);
         }
+    }
+
+    #[test]
+    fn test_text_section_visit() {
+        let code = r#"
+        .section .text
+        ret
+        ret $3
+        int $0x80
+        int3
+        pop %ax
+        pop %ebx
+        popw 3
+        pop %ds
+        mov 3, %ax
+        mov %ax, %bx
+        movl %eax, 3(%eax)
+        movl $2, %eax
+        movl $2, 2
+        leal 3(%eax), %eax
+        "#.trim();
+        let cursor = Cursor::new(code);
+        let mut parser = Parser::new(cursor);
+        let ast = parser.build_ast().unwrap();
+
+        let mut generator = Generator::new();
+        println!();
+        ast.run_visitor(&mut generator);
     }
 }
