@@ -1,12 +1,14 @@
 mod table;
 mod data;
+mod instruction;
 
 use crate::ast::{Node, Visitor, ProgramNode, ProgramItem, InstructionNode, LabelNode, PseudoSectionNode, PseudoGlobalNode, PseudoEquNode, PseudoFillNode, PseudoIntegerNode, PseudoStringNode, PseudoCommNode, ValueNode, OperandNode, RegisterNode, MemNode};
 use crate::common::Size;
-use crate::config::{self, OperandEncoding, RegisterKind, RegisterInfo};
+use crate::config::{self, OperandEncoding, RegisterKind, InstructionInfo, RegisterInfo};
 
 use table::{SymbolTable, SymbolKind};
 use data::Data;
+use instruction::Instruction;
 
 /// .section 声明的节
 #[derive(PartialEq, Clone, Copy)]
@@ -35,6 +37,30 @@ impl Section {
     }
 }
 
+#[derive(Clone, Copy)]
+enum Segment {
+    Cs,
+    Ds,
+    Es,
+    Fs,
+    Gs,
+    Ss,
+}
+
+impl Segment {
+    fn from(register_name: &str) -> Option<Self> {
+        match register_name {
+            "cs" => Some(Self::Cs),
+            "ds" => Some(Self::Ds),
+            "es" => Some(Self::Es),
+            "fs" => Some(Self::Fs),
+            "gs" => Some(Self::Gs),
+            "Ss" => Some(Self::Ss),
+            _ => None,
+        }
+    }
+}
+
 /// 表示一条指令或数据定义
 trait Statement {
     fn length(&self) -> u32;
@@ -44,7 +70,7 @@ trait Statement {
 /// 用于在 Statement 中表示数值或标签或外部符号
 enum Value {
     Integer(u32), // 可以确定的数值
-    Symbol(String, u32, bool), // 标签或外部符号, (name, addend, is_relative)
+    Symbol(String, bool), // 标签或外部符号, (name, is_relative)
 }
 
 struct RelocationInfo {
@@ -94,21 +120,21 @@ impl Generator {
     }
 
     /// 若 name 为 equ, 则返回其值, 否则返回重定位信息, 并尝试在符号表插入一个外部符号
-    fn value_of(&mut self, name: &String, addend: u32, is_relative: bool) -> Value {
+    fn value_of(&mut self, name: &String, is_relative: bool) -> Value {
         match self.table.get_symbol(name) {
             Some(SymbolKind::Equ(value)) => Value::Integer(value),
             _ => {
                 self.table.insert_external(name.clone());
-                Value::Symbol(name.clone(), addend, is_relative)
+                Value::Symbol(name.clone(), is_relative)
             },
         }
     }
 
     // 将 ValueNode 转为 Value, 只有在为整数或 equ 时才返回值, 否则返回重定位信息, 并尝试在符号表插入一个外部符号
-    fn value_of_node(&mut self, node: &ValueNode, addend: u32, is_relative: bool) -> Value {
+    fn value_of_node(&mut self, node: &ValueNode, is_relative: bool) -> Value {
         match node {
             ValueNode::Integer(value) => Value::Integer(*value),
-            ValueNode::Symbol(name) => self.value_of(name, addend, is_relative),
+            ValueNode::Symbol(name) => self.value_of(name, is_relative),
         }
     }
 }
@@ -162,9 +188,9 @@ impl Visitor for Generator {
         if node.size > 4 {
             println!("{}: warn: size is {} > 4, use as 4", self.line, node.size);
         }
-        let value = match self.value_of_node(&node.value, 0, false) {
+        let value = match self.value_of_node(&node.value, false) {
             Value::Integer(val) => val,
-            Value::Symbol(name, _, _) => panic!("{}: error: {} is not a constant", self.line, name),
+            Value::Symbol(name, _) => panic!("{}: error: {} is not a constant", self.line, name),
         };
         let data = Data::new_fill(node.repeat, node.size, value);
         self.offset += data.length();
@@ -181,7 +207,7 @@ impl Visitor for Generator {
         }
         let values: Vec<Value> = node.values
             .iter()
-            .map(|node| self.value_of_node(node, 0, false))
+            .map(|node| self.value_of_node(node, false))
             .collect();
         let data = Data::new(node.size, values);
         self.offset += data.length();
@@ -256,6 +282,7 @@ impl OperandEncoding {
             OperandEncoding::Opcode => operands.len() == 1 && operands[0].is_reg(),
             OperandEncoding::ImpliedSreg(name) => operands.len() == 1 && operands[0].is_register_of_name(name),
             OperandEncoding::Rm => operands.len() == 1 && operands[0].is_rm(),
+            OperandEncoding::Mem => operands.len() == 1 && operands[0].is_mem(),
             OperandEncoding::Reg => operands.len() == 1 && operands[0].is_reg(),
             OperandEncoding::Imm => operands.len() == 1 && operands[0].is_imm(),
             OperandEncoding::Rel => operands.len() == 1 && operands[0].is_imm(),
@@ -272,6 +299,12 @@ impl OperandEncoding {
         }
     }
 
+}
+
+impl Generator {
+    fn make_instruction(info: &InstructionInfo, size: Option<Size>, operands: &Vec<OperandNode>) -> Option<Instruction> {
+        todo!()
+    }
 }
 
 impl OperandNode {

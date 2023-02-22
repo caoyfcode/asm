@@ -56,7 +56,7 @@ impl Statement for Data {
                         data.push((*val >> (i * 8)) as u8);
                     }
                 }
-                Value::Symbol(name, _, is_relative) => { // addend 必然是 0
+                Value::Symbol(name, is_relative) => { // addend 必然是 0
                     let offset = data.len() as u32;
                     for _ in 0..value_size {
                         data.push(0);

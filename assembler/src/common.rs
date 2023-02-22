@@ -12,6 +12,16 @@ impl Size {
             Size::DoubleWord => 4,
         }
     }
+
+    pub fn size_of(val: u32) -> Self {
+        if val <= u8::MAX as u32 {
+            Self::Byte
+        } else if val <= u16::MAX as u32 {
+            Self::Word
+        } else {
+            Self::DoubleWord
+        }
+    }
 }
 
 #[derive(Debug, PartialEq, Clone)]

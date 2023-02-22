@@ -12,6 +12,7 @@ pub enum OperandEncoding {
     Opcode, // xxx reg : <opcode+rd>
     ImpliedSreg(&'static str), // pop/push Sreg : <opcode> : 不用加 0x66 前缀
     Rm, // xxx r/m : <opcode> <modrm> (<sib>) (<disp>)
+    Mem, // xxx m : <opcode> <modrm> (<sib>) (<disp>)
     Reg, // xxx reg : <opcode> <modrm> : 通用寄存器
     Imm, // xxx imm : <opcode> <imm>
     Rel, // xxx rel : <opcode> <imm>
@@ -177,8 +178,8 @@ lazy_static! {
         "pop" => [
             (vec![0x58], None, Size::Word, OperandEncoding::Opcode), // popw r16
             (vec![0x58], None, Size::DoubleWord, OperandEncoding::Opcode), // popl r32
-            (vec![0x8f], Some(0), Size::Word, OperandEncoding::Rm), // popw r/m16
-            (vec![0x8f], Some(0), Size::DoubleWord, OperandEncoding::Rm), // popl r/m32
+            (vec![0x8f], Some(0), Size::Word, OperandEncoding::Mem), // popw m16
+            (vec![0x8f], Some(0), Size::DoubleWord, OperandEncoding::Mem), // popl m32
             (vec![0x1f], None, Size::Word, OperandEncoding::ImpliedSreg("ds")), // pop %ds
             (vec![0x07], None, Size::Word, OperandEncoding::ImpliedSreg("es")), // pop %es
             (vec![0x17], None, Size::Word, OperandEncoding::ImpliedSreg("ss")), // pop %ss
