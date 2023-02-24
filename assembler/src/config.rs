@@ -14,7 +14,7 @@ pub enum OperandEncoding {
     Rm, // xxx r/m : <opcode> <modrm> (<sib>) (<disp>)
     Mem, // xxx m : <opcode> <modrm> (<sib>) (<disp>)
     Reg, // xxx reg : <opcode> <modrm> : 通用寄存器
-    Imm, // xxx imm : <opcode> <imm>
+    Imm(bool), // xxx imm : <opcode> <imm> : bool 表示是否需要后缀, 若仅仅只有一种操作数, 则不需要后缀, 此时二进制格式也不需要 0x66 前缀
     Rel, // xxx rel : <opcode> <imm>
     // 2 个操作数 (src, dest)
     RegRm, // xxx reg, r/m : <opcode> <modrm> (<sib>) (<disp>)
@@ -81,9 +81,8 @@ lazy_static! {
     static ref MNEMONICS_WITHOUT_SIZE: Vec<&'static str> = vec![
         "pusha", "pushad", "pushf", "pushfd",
         "popa", "popad", "popf", "popfd",
-        "ret",
+        "ret", "nop",
         "int", "int3", "int1", "into", "dec", "inc",
-        "jmp", "call",
         "ja", "jae", "jb", "jbe", "je", "jna", "jnae", "jnb", "jnbe", "jne"
     ];
 
@@ -92,6 +91,7 @@ lazy_static! {
         "pop", "push", "mul", "div",
         "mov", "cmp", "add", "sub", "or", "xor", "test", "lea",
         "imul", "idiv",
+        "jmp", "call",
     ];
 
     // 所有寄存器名
@@ -159,12 +159,15 @@ lazy_static! {
 
     static ref INSTRUCTION_INFOS: HashMap<&'static str, Vec<InstructionInfo>> = instruction_map! {
         // "mnemonic" => [ ( opcode, modrm_opcode, size, operand_encoding ),* ]
+        "nop" => [
+            (vec![0x90], None, Size::Byte, OperandEncoding::Zero), // nop
+        ],
         "ret" => [
             (vec![0xc3], None, Size::Byte, OperandEncoding::Zero), // ret
-            (vec![0xc2], None, Size::Word, OperandEncoding::Imm), // ret imm16
+            (vec![0xc2], None, Size::Word, OperandEncoding::Imm(false)), // ret imm16
         ],
         "int" => [
-            (vec![0xcd], None, Size::Byte, OperandEncoding::Imm), // int imm8
+            (vec![0xcd], None, Size::Byte, OperandEncoding::Imm(false)), // int imm8
         ],
         "int3" => [
             (vec![0xcc], None, Size::Byte, OperandEncoding::Zero), // int3
@@ -191,9 +194,9 @@ lazy_static! {
             (vec![0x50], None, Size::DoubleWord, OperandEncoding::Opcode), // pushl r32
             (vec![0xff], Some(6), Size::Word, OperandEncoding::Rm), // pushw r/m16
             (vec![0xff], Some(6), Size::DoubleWord, OperandEncoding::Rm), // pushl r/m32
-            (vec![0x6a], None, Size::Byte, OperandEncoding::Imm), // pushb imm8
-            (vec![0x68], None, Size::Word, OperandEncoding::Imm), // pushw imm16
-            (vec![0x68], None, Size::DoubleWord, OperandEncoding::Imm), // pushl imm32
+            (vec![0x6a], None, Size::Byte, OperandEncoding::Imm(true)), // pushb imm8
+            (vec![0x68], None, Size::Word, OperandEncoding::Imm(true)), // pushw imm16
+            (vec![0x68], None, Size::DoubleWord, OperandEncoding::Imm(true)), // pushl imm32
             (vec![0x0e], None, Size::Word, OperandEncoding::ImpliedSreg("cs")), // push %cs
             (vec![0x16], None, Size::Word, OperandEncoding::ImpliedSreg("ss")), // push %ss
             (vec![0x1e], None, Size::Word, OperandEncoding::ImpliedSreg("ds")), // push %ds
@@ -227,6 +230,31 @@ lazy_static! {
         "lea" => [
             (vec![0x8d], None, Size::Word, OperandEncoding::MemReg), // leaw m16, r16
             (vec![0x8d], None, Size::DoubleWord, OperandEncoding::MemReg), // leal m32, r32
+        ],
+        "add" => [
+            (vec![0x04], None, Size::Byte, OperandEncoding::ImmA), // addb imm8, %al
+            (vec![0x05], None, Size::Word, OperandEncoding::ImmA), // addw imm16, %ax
+            (vec![0x05], None, Size::DoubleWord, OperandEncoding::ImmA), // addl imm32, %eax
+            (vec![0x80], Some(0), Size::Byte, OperandEncoding::ImmRm), // addb imm8, r/m8
+            (vec![0x81], Some(0), Size::Word, OperandEncoding::ImmRm), // addw imm16, r/m16
+            (vec![0x81], Some(0), Size::DoubleWord, OperandEncoding::ImmRm), // addl imm32, r/m32
+            (vec![0x00], None, Size::Byte, OperandEncoding::RegRm), // addb r8, r/m8
+            (vec![0x01], None, Size::Word, OperandEncoding::RegRm), // addw r16, r/m16
+            (vec![0x01], None, Size::DoubleWord, OperandEncoding::RegRm), // addl r32, r/m32
+            (vec![0x02], None, Size::Byte, OperandEncoding::RmReg), // addb r/m8, r8
+            (vec![0x03], None, Size::Word, OperandEncoding::RmReg), // addw r/m16, r16
+            (vec![0x03], None, Size::DoubleWord, OperandEncoding::RmReg), // addl r/m32, r32
+        ],
+        "jmp" => [
+            (vec![0xe8], None, Size::Byte, OperandEncoding::Rel), // jmp rel8
+            (vec![0xe9], None, Size::DoubleWord, OperandEncoding::Rel), // jmp rel32
+            (vec![0xff], Some(4), Size::Word, OperandEncoding::Rm), // jmp *r/m16
+            (vec![0xff], Some(4), Size::DoubleWord, OperandEncoding::Rm), // jmp *r/m32
+        ],
+        "call" => [
+            (vec![0xe8], None, Size::DoubleWord, OperandEncoding::Rel), // call rel32
+            (vec![0xff], Some(2), Size::Word, OperandEncoding::Rm), // call *r/m16
+            (vec![0xff], Some(2), Size::DoubleWord, OperandEncoding::Rm), // call *r/m32
         ],
     };
 }

@@ -135,18 +135,19 @@ impl InstructionBuilder {
         }
     }
 
-    pub(super) fn operand_size_override_if(mut self, has_prefix: bool) -> Self {
+    pub(super) fn operand_size_override(mut self, has_prefix: bool) -> Self {
         self.operand_size_override = has_prefix;
         self
     }
 
-    pub(super) fn segment_override(mut self, segment: Segment) -> Self {
-        self.segment_override = Some(segment);
+    pub(super) fn segment_override(mut self, segment: Option<Segment>) -> Self {
+        self.segment_override = segment;
         self
     }
 
     pub(super) fn opcode(mut self, opcode: &[u8]) -> Self {
-        self.opcode.extend_from_slice(opcode);
+        self.opcode.clear();
+        self.opcode.extend(opcode);
         self
     }
 
@@ -381,7 +382,7 @@ mod tests {
         let inst = Instruction::builder()
             .opcode(&[0x50])
             .opcode_rd(0)
-            .operand_size_override_if(true)
+            .operand_size_override(true)
             .build()
             .unwrap();
         let (text, _) = inst.emit();
@@ -550,7 +551,7 @@ mod tests {
             .opcode(&[0x8f])
             .modrm_reg_opcode(0)
             .modrm_rm_m(None, Some(0), None)
-            .segment_override(Segment::Cs)
+            .segment_override(Some(Segment::Cs))
             .build()
             .unwrap();
         let (text, _) = inst.emit();
