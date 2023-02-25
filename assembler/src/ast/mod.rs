@@ -35,8 +35,8 @@ impl Ast {
         }
     }
 
-    pub fn run_visitor<V: Visitor>(&self, visitor: &mut V) {
-        self.program.accept(visitor);
+    pub fn run_visitor<V: Visitor>(&self, visitor: &mut V) -> V::Return {
+        self.program.accept(visitor)
     }
 }
 

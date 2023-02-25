@@ -31,6 +31,12 @@ pub enum Error {
     UnknownSymbol(usize, String), // line number and symbol
     // 语法错误
     UnexpectedSymbol(usize, String, String), // line number, expected description, found symbol
+    // 语义错误
+    UnsupportedSection(usize, String), // line number, section name
+    DefineSymbolFail(usize, String, String), // line number, name, def type
+    UseWrongTypeSymbol(usize, String, String), // line number, name, need type
+    NotInRightSection(usize, String), // line number, right section name
+    InvalidOperands(usize, String), // line number, mnemonic
 }
 
 impl std::fmt::Display for Error {
@@ -45,6 +51,21 @@ impl std::fmt::Display for Error {
             Error::UnexpectedSymbol(line, expected, found) => {
                 write!(f, "{line}: error: expected {expected}, but found \"{found}\"")
             },
+            Error::UnsupportedSection(line, name) => {
+                write!(f, "{line}: error: unsupported section \"{name}\"")
+            },
+            Error::DefineSymbolFail(line, name, kind) => {
+                write!(f, "{line}: error: \"{name}\" can't be a new {kind}")
+            },
+            Error::UseWrongTypeSymbol(line, name, kind) => {
+                write!(f, "{line}: error: \"{name}\" is not a {kind}")
+            },
+            Error::NotInRightSection(line, name) => {
+                write!(f, "{line}: error: not in {name} section")
+            },
+            Error::InvalidOperands(line, mnemonic) => {
+                write!(f, "{line}: error: operands of \"{mnemonic}\" are invalid")
+            }
         }
     }
 }

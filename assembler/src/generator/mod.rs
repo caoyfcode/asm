@@ -3,7 +3,7 @@ mod data;
 mod instruction;
 
 use crate::ast::{Node, Visitor, ProgramNode, ProgramItem, InstructionNode, LabelNode, PseudoSectionNode, PseudoGlobalNode, PseudoEquNode, PseudoFillNode, PseudoIntegerNode, PseudoStringNode, PseudoCommNode, ValueNode, OperandNode, RegisterNode, MemNode};
-use crate::common::Size;
+use crate::common::{Size, Error};
 use crate::config::{self, OperandEncoding, RegisterKind, InstructionInfo, RegisterInfo};
 
 use table::{SymbolTable, SymbolKind};
@@ -187,59 +187,67 @@ impl Generator {
 /// 访问语法树, 从语法树建立符号表, 生成 data section, bss section 与 text section,
 /// 但是标签不替换成值, 仅仅把 equ 替换成值
 impl Visitor for Generator {
-    type Return = ();
+    type Return = Result<(), Error>;
 
     fn visit_program(&mut self, node: &ProgramNode) -> Self::Return {
         for (item, line) in &node.items {
             self.line = *line;
             match item {
-                ProgramItem::PseudoSection(node) => node.accept(self),
-                ProgramItem::PseudoGlobal(node) => node.accept(self),
-                ProgramItem::PseudoEqu(node) => node.accept(self),
-                ProgramItem::PseudoFill(node) => node.accept(self),
-                ProgramItem::PseudoInteger(node) => node.accept(self),
-                ProgramItem::PseudoString(node) => node.accept(self),
-                ProgramItem::PseudoComm(node) => node.accept(self),
-                ProgramItem::Instruction(node) => node.accept(self),
-                ProgramItem::Label(node) => node.accept(self),
+                ProgramItem::PseudoSection(node) => node.accept(self)?,
+                ProgramItem::PseudoGlobal(node) => node.accept(self)?,
+                ProgramItem::PseudoEqu(node) => node.accept(self)?,
+                ProgramItem::PseudoFill(node) => node.accept(self)?,
+                ProgramItem::PseudoInteger(node) => node.accept(self)?,
+                ProgramItem::PseudoString(node) => node.accept(self)?,
+                ProgramItem::PseudoComm(node) => node.accept(self)?,
+                ProgramItem::Instruction(node) => node.accept(self)?,
+                ProgramItem::Label(node) => node.accept(self)?,
             }
         }
+        Ok(())
     }
 
     fn visit_pseudo_section(&mut self, node: &PseudoSectionNode) -> Self::Return {
         self.current_section = Section::from(&node.symbol);
         self.offset = 0;
         if let None = self.current_section {
-            panic!("{}: error: .section {}", self.line, node.symbol);
+            Err(Error::UnsupportedSection(self.line, node.symbol.clone()))
+        } else {
+            Ok(())
         }
     }
 
     fn visit_pseudo_global(&mut self, node: &PseudoGlobalNode) -> Self::Return {
         if !self.table.set_global(node.symbol.clone()) {
-            panic!("{}: error: .global {}", self.line, node.symbol);
+            Err(Error::DefineSymbolFail(self.line, node.symbol.clone(), String::from("global symbol")))
+        } else {
+            Ok(())
         }
     }
 
     fn visit_pseudo_equ(&mut self, node: &PseudoEquNode) -> Self::Return {
         if !self.table.insert_equ(node.symbol.clone(), node.value) {
-            panic!("{}: error: .equ {}, {}", self.line, node.symbol, node.value);
+            Err(Error::DefineSymbolFail(self.line, node.symbol.clone(), String::from("constant")))
+        } else {
+            Ok(())
         }
     }
 
     fn visit_pseudo_fill(&mut self, node: &PseudoFillNode) -> Self::Return {
         if self.current_section != Some(Section::Data) {
-            panic!("{}: error: not in .data section", self.line);
+            return Err(Error::NotInRightSection(self.line, Section::Data.name().to_string()))
         }
         if node.size > 4 {
             println!("{}: warn: size is {} > 4, use as 4", self.line, node.size);
         }
         let value = match self.value_of_node(&node.value, false) {
             Value::Integer(val) => val,
-            Value::Symbol(name, _) => panic!("{}: error: {} is not a constant", self.line, name),
+            Value::Symbol(name, _) => return Err(Error::UseWrongTypeSymbol(self.line, name, String::from("constant"))),
         };
         let data = Data::new_fill(node.repeat, node.size, value);
         self.offset += data.length();
         self.data_section.push(data);
+        Ok(())
     }
 
     fn visit_value(&mut self, _node: &ValueNode) -> Self::Return {
@@ -248,7 +256,7 @@ impl Visitor for Generator {
 
     fn visit_pseudo_integer(&mut self, node: &PseudoIntegerNode) -> Self::Return {
         if self.current_section != Some(Section::Data) {
-            panic!("{}: error: not in .data section", self.line);
+            return Err(Error::NotInRightSection(self.line, Section::Data.name().to_string()));
         }
         let values: Vec<Value> = node.values
             .iter()
@@ -257,11 +265,12 @@ impl Visitor for Generator {
         let data = Data::new(node.size, values);
         self.offset += data.length();
         self.data_section.push(data);
+        Ok(())
     }
 
     fn visit_pseudo_string(&mut self, node: &PseudoStringNode) -> Self::Return {
         if self.current_section != Some(Section::Data) {
-            panic!("{}: error: not in .data section", self.line);
+            return Err(Error::NotInRightSection(self.line, Section::Data.name().to_string()));
         }
         let mut values: Vec<Value> = node.content
             .bytes()
@@ -273,6 +282,7 @@ impl Visitor for Generator {
         let data = Data::new(Size::Byte, values);
         self.offset += data.length();
         self.data_section.push(data);
+        Ok(())
     }
 
     fn visit_pseudo_comm(&mut self, _node: &PseudoCommNode) -> Self::Return {
@@ -281,18 +291,17 @@ impl Visitor for Generator {
 
     fn visit_instruction(&mut self, node: &InstructionNode) -> Self::Return {
         if self.current_section != Some(Section::Text) {
-            panic!("{}: error: not in .text section", self.line);
+            return Err(Error::NotInRightSection(self.line, Section::Text.name().to_string()));
         }
-        let infos = config::infos_of_instruction(&node.mnemonic)
-            .expect(&format!("{}: error: no such instruction \"{}\"", self.line, node.mnemonic));
+        let infos = config::infos_of_instruction(&node.mnemonic).unwrap(); // 助记符在词法分析时判断
         for info in infos {
             if let Some(inst) = self.make_instruction(info, node.operand_size, &node.operands) {
                 self.offset += inst.length();
                 self.text_section.push(inst);
-                return;
+                return Ok(());
             }
         }
-        panic!("{}: error: unknown operands of \"{}\"", self.line, node.mnemonic)
+        Err(Error::InvalidOperands(self.line, node.mnemonic.clone()))
     }
 
     fn visit_operand(&mut self, _node: &OperandNode) -> Self::Return {
@@ -310,10 +319,15 @@ impl Visitor for Generator {
     fn visit_label(&mut self, node: &LabelNode) -> Self::Return {
         let section = match self.current_section {
             Some(section) => section,
-            None => panic!("{}: error: lable defination in unknown section", self.line),
+            None => return Err(Error::NotInRightSection(
+                self.line,
+                format!("{} or {} or {}", Section::Text.name(), Section::Data.name(), Section::Bss.name())
+            )),
         };
         if !self.table.insert_label(node.label.clone(), self.offset, section) {
-            panic!("{}: error: unable to create label \"{}\"", self.line, node.label);
+            Err(Error::DefineSymbolFail(self.line, node.label.clone(), String::from("label")))
+        } else {
+            Ok(())
         }
     }
 
@@ -841,7 +855,7 @@ mod tests {
         let ast = parser.build_ast().unwrap();
 
         let mut generator = Generator::new();
-        ast.run_visitor(&mut generator);
+        ast.run_visitor(&mut generator).unwrap();
 
         let (data_sec, data_rel) = generator.generate_data_section();
         let (labels, externals) = generator.generate_symbol_table();
@@ -902,7 +916,7 @@ mod tests {
         let ast = parser.build_ast().unwrap();
 
         let mut generator = Generator::new();
-        ast.run_visitor(&mut generator);
+        ast.run_visitor(&mut generator).unwrap();
 
         let (text_sec, text_rel) = generator.generate_text_section();
         let (labels, externals) = generator.generate_symbol_table();
@@ -975,7 +989,7 @@ mod tests_inst_gen {
         // println!("{}", printer.as_str());
 
         let mut generator = Generator::new();
-        ast.run_visitor(&mut generator);
+        ast.run_visitor(&mut generator).unwrap();
         let (text, _) = generator.generate_text_section();
         text
     }
@@ -1167,5 +1181,82 @@ mod tests_inst_gen {
             "movw (%eax), %es"
         );
         assert_eq!(&code, &[0x8e, 0x00]);
+    }
+}
+
+#[cfg(test)]
+mod test_errors {
+    use std::io::Cursor;
+
+    use crate::parser::Parser;
+
+    use super::Generator;
+
+    fn run_assembler(src_code: &str) {
+        let cursor = Cursor::new(src_code);
+        let mut parser = Parser::new(cursor);
+        let ast = parser.build_ast().unwrap();
+
+        // let mut printer = crate::ast::printer::AstPrinter::new();
+        // ast.run_visitor(&mut printer);
+        // println!();
+        // println!("{}", printer.as_str());
+
+        let mut generator = Generator::new();
+        if let Err(e) = ast.run_visitor(&mut generator) {
+            panic!("{}", e);
+        }
+    }
+
+    #[test]
+    #[should_panic = "1: error: unsupported section \"hehe\""]
+    fn test_unsupported_section() {
+        run_assembler(".section hehe");
+    }
+
+    #[test]
+    #[should_panic = "3: error: \"a\" can't be a new label"]
+    fn test_define_symbol_fail() {
+        run_assembler(
+            r#"
+            .equ a, 1
+            .section .data
+            a:
+            "#.trim()
+        );
+    }
+
+    #[test]
+    #[should_panic = "3: error: \"a\" is not a constant"]
+    fn test_use_wrong_type_symbol() {
+        run_assembler(
+            r#"
+            .section .data
+            a:
+            .fill 3, 4, a
+            "#.trim()
+        );
+    }
+
+    #[test]
+    #[should_panic = "2: error: not in .data section"]
+    fn test_not_in_right_section() {
+        run_assembler(
+            r#"
+            .section .text
+            .int 3
+            "#.trim()
+        );
+    }
+
+    #[test]
+    #[should_panic = "2: error: operands of \"push\" are invalid"]
+    fn test_invalid_operands() {
+        run_assembler(
+            r#"
+            .section .text
+            push 1, 2, 3
+            "#.trim()
+        );
     }
 }
