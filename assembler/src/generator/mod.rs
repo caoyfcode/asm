@@ -83,6 +83,7 @@ struct RelocationInfo {
 struct Generator {
     data_section: Vec<Data>,
     text_section: Vec<Instruction>,
+    bss_section_size: u32,
     table: SymbolTable,
     current_section: Option<Section>,
     offset: u32,
@@ -95,6 +96,7 @@ impl Generator {
         Self {
             data_section: Vec::new(),
             text_section: Vec::new(),
+            bss_section_size: 0,
             table: SymbolTable::new(),
             current_section: None,
             offset: 0,
@@ -131,6 +133,10 @@ impl Generator {
         }
         self.handle_relative_relocation(Section::Text, &mut section, &mut rel);
         (section, rel)
+    }
+
+    fn generate_bss_section_size(&self) -> u32 {
+        self.bss_section_size
     }
 
     // 将对于同 section 标签的相对重定位从重定位表删除, 并修改字节数组对应位置
@@ -213,6 +219,19 @@ impl Visitor for Generator {
         if let None = self.current_section {
             Err(Error::UnsupportedSection(self.line, node.symbol.clone()))
         } else {
+            self.offset = match self.current_section.unwrap() {
+                Section::Text => {
+                    self.text_section.iter()
+                        .map(|code| code.length())
+                        .sum()
+                }
+                Section::Data => {
+                    self.data_section.iter()
+                        .map(|code| code.length())
+                        .sum()
+                }
+                Section::Bss => self.bss_section_size
+            };
             Ok(())
         }
     }
@@ -285,8 +304,23 @@ impl Visitor for Generator {
         Ok(())
     }
 
-    fn visit_pseudo_comm(&mut self, _node: &PseudoCommNode) -> Self::Return {
-        panic!("{}: error: not support .comm/.lcomm", self.line);
+    fn visit_pseudo_comm(&mut self, node: &PseudoCommNode) -> Self::Return {
+        if self.current_section != Some(Section::Bss) {
+            return Err(Error::NotInRightSection(self.line, Section::Bss.name().to_string()));
+        }
+        if !node.is_local {
+            return Err(Error::UnknownSymbol(self.line, String::from(".comm"))); // 暂不支持 .comm, 暂时先返回词法错误
+        }
+        let length = match self.value_of_node(&node.length, false) {
+            Value::Integer(val) => val,
+            Value::Symbol(name, _) => return Err(Error::UseWrongTypeSymbol(self.line, name, String::from("constant"))),
+        };
+        if !self.table.insert_label(node.symbol.clone(), self.offset, Section::Bss) {
+            return Err(Error::DefineSymbolFail(self.line, node.symbol.clone(), String::from("label")));
+        }
+        self.bss_section_size += length;
+        self.offset += length;
+        Ok(())
     }
 
     fn visit_instruction(&mut self, node: &InstructionNode) -> Self::Return {
@@ -466,7 +500,7 @@ impl Generator {
                 }
                 let value = self.get_imm_operand(&operands[0], true)?;
                 let size = match &value {
-                    Value::Integer(val) => return None, // 暂时不支持非标签
+                    Value::Integer(_) => return None, // 暂时不支持非标签
                     Value::Symbol(_, _) => Size::DoubleWord,
                 };
                 if size != info.operand_size {
@@ -838,19 +872,80 @@ mod tests {
 
     #[test]
     fn test_data_section() {
-        let code = r#"
-        .section .data
-        arr: .int 1, 3, 5, 7
-        byte_arr: .byte 1, 3, 5, 7
-        str_addr: .int str
-        str: .string "Hello, world!"
-        ones: .fill 3, 3, 1
-        ptr: .int extern_addr
-        .section .text
-        .global main
-        main:
-        "#.trim();
-        let cursor = Cursor::new(code);
+        assemble_and_print_msg(
+            r#"
+            .section .data
+            arr:
+                .int 1, 3, 5, 7
+            byte_arr:
+                .byte 1, 3, 5, 7
+            str_addr:
+                .int str
+            str:
+                .string "Hello, world!"
+            ones:
+                .fill 3, 3, 1
+            ptr:
+                .int extern_addr
+            .section .text
+                .global main
+            main:
+            "#.trim()
+        );
+    }
+
+    #[test]
+    fn test_text_section() {
+        assemble_and_print_msg(
+            r#"
+            .section .data
+            hello:
+                .string "Hello, World!"
+            .section .text
+            main:
+                push %ebp
+                mov %esp, %ebp
+                pushl $hello
+                call printf
+                jmp end
+                nop
+            end:
+                call hehe
+                mov %ebp, %esp
+                pop %ebp
+                ret
+            hehe:
+                ret
+            "#.trim()
+        );
+    }
+
+    #[test]
+    fn test_bss_section() {
+        assemble_and_print_msg(
+            r#"
+                .section .data
+                msg:
+                    .string "value is %d"
+                .section .text
+                main:
+                    push %ebp
+                    mov %esp, %ebp
+                    addl $1, value
+                    pushl value
+                    pushl $msg
+                    call printf
+                    mov %ebp, %esp
+                    pop %ebp
+                    ret
+                .section .bss
+                    .lcomm value, 4
+            "#.trim()
+        );
+    }
+
+    fn assemble_and_print_msg(src_code: &str) {
+        let cursor = Cursor::new(src_code);
         let mut parser = Parser::new(cursor);
         let ast = parser.build_ast().unwrap();
 
@@ -858,6 +953,8 @@ mod tests {
         ast.run_visitor(&mut generator).unwrap();
 
         let (data_sec, data_rel) = generator.generate_data_section();
+        let (text_sec, text_rel) = generator.generate_text_section();
+        let bss_size = generator.generate_bss_section_size();
         let (labels, externals) = generator.generate_symbol_table();
 
         println!();
@@ -883,57 +980,6 @@ mod tests {
         print_hex(&data_sec, &splits);
 
         println!();
-        println!(".data relocation table is:");
-        println!("offset\tname\tis_relative");
-        for rel in data_rel {
-            println!("0x{:x}\t{}\t{}", rel.offset, rel.name, rel.is_relative);
-        }
-    }
-
-    #[test]
-    fn test_text_section() {
-        let code = r#"
-        .section .data
-        hello: .string "Hello, World!"
-        .section .text
-        main:
-            push %ebp
-            mov %esp, %ebp
-            pushl $hello
-            call printf
-            jmp end
-            nop
-        end:
-            call hehe
-            mov %ebp, %esp
-            pop %ebp
-            ret
-        hehe:
-            ret
-        "#.trim();
-        let cursor = Cursor::new(code);
-        let mut parser = Parser::new(cursor);
-        let ast = parser.build_ast().unwrap();
-
-        let mut generator = Generator::new();
-        ast.run_visitor(&mut generator).unwrap();
-
-        let (text_sec, text_rel) = generator.generate_text_section();
-        let (labels, externals) = generator.generate_symbol_table();
-
-        println!();
-        println!("symbol table is:");
-        println!("labels:");
-        println!("offset\tsection\tglobal\tname");
-        for (name, offset, section, is_global) in labels {
-            println!("0x{:x}\t{}\t{}\t{}", offset, section.name(), is_global, name);
-        }
-        println!("externals:");
-        for name in externals {
-            println!("{name}");
-        }
-
-        println!();
         println!(".text section is:");
         let mut len: usize = 0;
         let mut splits: Vec<usize> = Vec::new();
@@ -944,12 +990,21 @@ mod tests {
         print_hex(&text_sec, &splits);
 
         println!();
+        println!(".bss section size is: {bss_size}");
+
+        println!();
+        println!(".data relocation table is:");
+        println!("offset\tname\tis_relative");
+        for rel in data_rel {
+            println!("0x{:x}\t{}\t{}", rel.offset, rel.name, rel.is_relative);
+        }
+
+        println!();
         println!(".text relocation table is:");
         println!("offset\tname\tis_relative");
         for rel in text_rel {
             println!("0x{:x}\t{}\t{}", rel.offset, rel.name, rel.is_relative);
         }
-
     }
 
     // 将 datas 显示为 16 进制形式, 且在 splits 处分割, 每部分占一行
