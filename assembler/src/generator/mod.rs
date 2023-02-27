@@ -85,21 +85,25 @@ struct Generator {
     text_section: Vec<Instruction>,
     bss_section_size: u32,
     table: SymbolTable,
-    current_section: Option<Section>,
-    offset: u32,
+    current_section: Section,
+    current_offset: u32,
     // 属性
     line: usize, // 行号
 }
 
 impl Generator {
     fn new() -> Self {
+        let mut table = SymbolTable::new();
+        table.insert_label(Section::Text.name().to_string(), 0, Section::Text);
+        table.insert_label(Section::Data.name().to_string(), 0, Section::Data);
+        table.insert_label(Section::Bss.name().to_string(), 0, Section::Bss);
         Self {
             data_section: Vec::new(),
             text_section: Vec::new(),
             bss_section_size: 0,
-            table: SymbolTable::new(),
-            current_section: None,
-            offset: 0,
+            table,
+            current_section: Section::Text,
+            current_offset: 0,
             line: 0,
         }
     }
@@ -167,7 +171,11 @@ impl Generator {
     }
 
     fn generate_symbol_table(&self) -> (Vec<(String, u32, Section, bool)>, Vec<String>) {
-        self.table.labels_and_externals()
+        let (labels, extenals) = self.table.labels_and_externals();
+        let labels: Vec<(String, u32, Section, bool)> = labels.into_iter()
+            .filter(|(name, ..)| Section::from(&name).is_none())
+            .collect();
+        (labels, extenals)
     }
 
     /// 若 name 为 equ, 则返回其值, 否则返回重定位信息, 并尝试在符号表插入一个外部符号
@@ -214,26 +222,25 @@ impl Visitor for Generator {
     }
 
     fn visit_pseudo_section(&mut self, node: &PseudoSectionNode) -> Self::Return {
-        self.current_section = Section::from(&node.symbol);
-        self.offset = 0;
-        if let None = self.current_section {
-            Err(Error::UnsupportedSection(self.line, node.symbol.clone()))
-        } else {
-            self.offset = match self.current_section.unwrap() {
-                Section::Text => {
-                    self.text_section.iter()
-                        .map(|code| code.length())
-                        .sum()
-                }
-                Section::Data => {
-                    self.data_section.iter()
-                        .map(|code| code.length())
-                        .sum()
-                }
-                Section::Bss => self.bss_section_size
-            };
-            Ok(())
-        }
+        self.current_section = match Section::from(&node.symbol) {
+            Some(section) => section,
+            None => return Err(Error::UnsupportedSection(self.line, node.symbol.clone())),
+        };
+
+        self.current_offset = match self.current_section {
+            Section::Text => {
+                self.text_section.iter()
+                    .map(|code| code.length())
+                    .sum()
+            }
+            Section::Data => {
+                self.data_section.iter()
+                    .map(|code| code.length())
+                    .sum()
+            }
+            Section::Bss => self.bss_section_size
+        };
+        Ok(())
     }
 
     fn visit_pseudo_global(&mut self, node: &PseudoGlobalNode) -> Self::Return {
@@ -253,7 +260,7 @@ impl Visitor for Generator {
     }
 
     fn visit_pseudo_fill(&mut self, node: &PseudoFillNode) -> Self::Return {
-        if self.current_section != Some(Section::Data) {
+        if self.current_section != Section::Data {
             return Err(Error::NotInRightSection(self.line, Section::Data.name().to_string()))
         }
         if node.size > 4 {
@@ -264,7 +271,7 @@ impl Visitor for Generator {
             Value::Symbol(name, _) => return Err(Error::UseWrongTypeSymbol(self.line, name, String::from("constant"))),
         };
         let data = Data::new_fill(node.repeat, node.size, value);
-        self.offset += data.length();
+        self.current_offset += data.length();
         self.data_section.push(data);
         Ok(())
     }
@@ -274,7 +281,7 @@ impl Visitor for Generator {
     }
 
     fn visit_pseudo_integer(&mut self, node: &PseudoIntegerNode) -> Self::Return {
-        if self.current_section != Some(Section::Data) {
+        if self.current_section != Section::Data {
             return Err(Error::NotInRightSection(self.line, Section::Data.name().to_string()));
         }
         let values: Vec<Value> = node.values
@@ -282,13 +289,13 @@ impl Visitor for Generator {
             .map(|node| self.value_of_node(node, false))
             .collect();
         let data = Data::new(node.size, values);
-        self.offset += data.length();
+        self.current_offset += data.length();
         self.data_section.push(data);
         Ok(())
     }
 
     fn visit_pseudo_string(&mut self, node: &PseudoStringNode) -> Self::Return {
-        if self.current_section != Some(Section::Data) {
+        if self.current_section != Section::Data {
             return Err(Error::NotInRightSection(self.line, Section::Data.name().to_string()));
         }
         let mut values: Vec<Value> = node.content
@@ -299,38 +306,38 @@ impl Visitor for Generator {
             values.push(Value::Integer(0));
         }
         let data = Data::new(Size::Byte, values);
-        self.offset += data.length();
+        self.current_offset += data.length();
         self.data_section.push(data);
         Ok(())
     }
 
     fn visit_pseudo_comm(&mut self, node: &PseudoCommNode) -> Self::Return {
-        if self.current_section != Some(Section::Bss) {
-            return Err(Error::NotInRightSection(self.line, Section::Bss.name().to_string()));
-        }
         if !node.is_local {
             return Err(Error::UnknownSymbol(self.line, String::from(".comm"))); // 暂不支持 .comm, 暂时先返回词法错误
+        }
+        if self.current_section != Section::Bss {
+            return Err(Error::NotInRightSection(self.line, Section::Bss.name().to_string()));
         }
         let length = match self.value_of_node(&node.length, false) {
             Value::Integer(val) => val,
             Value::Symbol(name, _) => return Err(Error::UseWrongTypeSymbol(self.line, name, String::from("constant"))),
         };
-        if !self.table.insert_label(node.symbol.clone(), self.offset, Section::Bss) {
-            return Err(Error::DefineSymbolFail(self.line, node.symbol.clone(), String::from("label")));
+        if !self.table.insert_label(node.symbol.clone(), self.current_offset, Section::Bss) {
+            return Err(Error::DefineSymbolFail(self.line, node.symbol.clone(), String::from("local common symbol")));
         }
         self.bss_section_size += length;
-        self.offset += length;
+        self.current_offset += length;
         Ok(())
     }
 
     fn visit_instruction(&mut self, node: &InstructionNode) -> Self::Return {
-        if self.current_section != Some(Section::Text) {
+        if self.current_section != Section::Text {
             return Err(Error::NotInRightSection(self.line, Section::Text.name().to_string()));
         }
         let infos = config::infos_of_instruction(&node.mnemonic).unwrap(); // 助记符在词法分析时判断
         for info in infos {
             if let Some(inst) = self.make_instruction(info, node.operand_size, &node.operands) {
-                self.offset += inst.length();
+                self.current_offset += inst.length();
                 self.text_section.push(inst);
                 return Ok(());
             }
@@ -351,14 +358,7 @@ impl Visitor for Generator {
     }
 
     fn visit_label(&mut self, node: &LabelNode) -> Self::Return {
-        let section = match self.current_section {
-            Some(section) => section,
-            None => return Err(Error::NotInRightSection(
-                self.line,
-                format!("{} or {} or {}", Section::Text.name(), Section::Data.name(), Section::Bss.name())
-            )),
-        };
-        if !self.table.insert_label(node.label.clone(), self.offset, section) {
+        if !self.table.insert_label(node.label.clone(), self.current_offset, self.current_section) {
             Err(Error::DefineSymbolFail(self.line, node.label.clone(), String::from("label")))
         } else {
             Ok(())
@@ -1311,6 +1311,18 @@ mod test_errors {
             r#"
             .section .text
             push 1, 2, 3
+            "#.trim()
+        );
+    }
+
+    #[test]
+    #[should_panic = "2: error: \".text\" can't be a new label"]
+    fn test_section_name_as_label() {
+        run_assembler(
+            r#"
+            .section .text
+            .text:
+                ret
             "#.trim()
         );
     }
