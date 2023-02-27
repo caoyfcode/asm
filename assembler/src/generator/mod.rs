@@ -6,7 +6,7 @@ use crate::ast::{Node, Visitor, ProgramNode, ProgramItem, InstructionNode, Label
 use crate::common::{Size, Error};
 use crate::config::{self, OperandEncoding, RegisterKind, InstructionInfo, RegisterInfo};
 
-use table::{SymbolTable, SymbolKind};
+use table::{SymbolTable, SymbolKind, Label};
 use data::Data;
 use instruction::Instruction;
 
@@ -170,10 +170,10 @@ impl Generator {
         }
     }
 
-    fn generate_symbol_table(&self) -> (Vec<(String, u32, Section, bool)>, Vec<String>) {
+    fn generate_symbol_table(&self) -> (Vec<Label>, Vec<String>) {
         let (labels, extenals) = self.table.labels_and_externals();
-        let labels: Vec<(String, u32, Section, bool)> = labels.into_iter()
-            .filter(|(name, ..)| Section::from(&name).is_none())
+        let labels: Vec<Label> = labels.into_iter()
+            .filter(|Label {name, .. }| Section::from(&name).is_none())
             .collect();
         (labels, extenals)
     }
@@ -181,7 +181,7 @@ impl Generator {
     /// 若 name 为 equ, 则返回其值, 否则返回重定位信息, 并尝试在符号表插入一个外部符号
     fn value_of(&mut self, name: &String, is_relative: bool) -> Value {
         match self.table.get_symbol(name) {
-            Some(SymbolKind::Equ(value)) => Value::Integer(value),
+            Some(SymbolKind::Constant(value)) => Value::Integer(value),
             _ => {
                 self.table.insert_external(name.clone());
                 Value::Symbol(name.clone(), is_relative)
@@ -252,7 +252,7 @@ impl Visitor for Generator {
     }
 
     fn visit_pseudo_equ(&mut self, node: &PseudoEquNode) -> Self::Return {
-        if !self.table.insert_equ(node.symbol.clone(), node.value) {
+        if !self.table.insert_constant(node.symbol.clone(), node.value) {
             Err(Error::DefineSymbolFail(self.line, node.symbol.clone(), String::from("constant")))
         } else {
             Ok(())
@@ -961,7 +961,7 @@ mod tests {
         println!("symbol table is:");
         println!("labels:");
         println!("offset\tsection\tglobal\tname");
-        for (name, offset, section, is_global) in labels {
+        for Label {name, offset, section, is_global } in labels {
             println!("0x{:x}\t{}\t{}\t{}", offset, section.name(), is_global, name);
         }
         println!("externals:");
