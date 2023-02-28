@@ -390,6 +390,9 @@ impl Generator {
                 if operands.len() != 0 {
                     return None;
                 }
+                if size.is_none() && !info.is_default {
+                    return None;
+                }
                 Instruction::builder()
                     .opcode(&info.opcode)
                     .operand_size_override(info.operand_size == Size::Word) // 如 pusha 需要前缀
@@ -417,7 +420,7 @@ impl Generator {
                     .opcode(&info.opcode)
                     .build()
             },
-            OperandEncoding::Rm | OperandEncoding::Mem | OperandEncoding::JmpRm => {
+            OperandEncoding::Rm | OperandEncoding::Mem => {
                 if operands.len() != 1 || !operands[0].is_rm() {
                     return None;
                 }
@@ -439,14 +442,8 @@ impl Generator {
                     builder.modrm_rm_r(reg_info.code)
                         .build()
                 } else { // mem
-                    if size.is_none() {
-                        if let OperandEncoding::JmpRm = info.operand_encoding { // 当 jmp *mem 时, 若无后缀, 视为 l
-                            if info.operand_size != Size::DoubleWord {
-                                return None;
-                            }
-                        } else {
-                            return None;
-                        }
+                    if size.is_none() && !info.is_default {
+                        return None;
                     }
                     let mem = self.get_mem_operand(&operands[0])?;
                     builder.modrm_rm_m(mem.disp, mem.base, mem.index_scale)
@@ -470,18 +467,18 @@ impl Generator {
                     .build()
 
             },
-            OperandEncoding::Imm(need_suffix) => {
+            OperandEncoding::Imm(need_prefix) => {
                 if operands.len() != 1 || !operands[0].is_imm() {
                     return None;
                 }
-                if need_suffix && size.is_none() {
+                if size.is_none() && !info.is_default {
                     return None;
                 }
                 let value = self.get_imm_operand(&operands[0], false)?;
                 Instruction::builder()
                     .opcode(&info.opcode)
                     .immediate(value, info.operand_size)
-                    .operand_size_override(info.operand_size == Size::Word && need_suffix)
+                    .operand_size_override(info.operand_size == Size::Word && need_prefix) // imm 有不需要前缀的特例
                     .build()
             },
             OperandEncoding::Rel => { // 暂时先不允许操作数直接为数值, 且暂不支持 instruction relaxation, 故其实只有 rel32
@@ -598,7 +595,7 @@ impl Generator {
                         .operand_size_override(info.operand_size == Size::Word)
                         .build()
                 } else { // m
-                    if size.is_none() {
+                    if size.is_none() && !info.is_default {
                         return None;
                     }
                     let mem = self.get_mem_operand(&operands[1])?;
@@ -649,7 +646,7 @@ impl Generator {
                         .operand_size_override(info.operand_size == Size::Word)
                         .build()
                 } else { // m
-                    if size.is_none() {
+                    if size.is_none() && !info.is_default { // SregRm 可以是 16 或 32, 因而无法确定大小
                         return None;
                     }
                     let mem = self.get_mem_operand(&operands[rm_index])?;

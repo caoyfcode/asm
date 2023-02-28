@@ -11,11 +11,10 @@ pub enum OperandEncoding {
     // 1 个操作数
     Opcode, // xxx reg : <opcode+rd>
     ImpliedSreg(&'static str), // pop/push Sreg : <opcode> : 不用加 0x66 前缀
-    Rm, // xxx r/m : <opcode> <modrm> (<sib>) (<disp>)
-    Mem, // xxx m : <opcode> <modrm> (<sib>) (<disp>)
-    JmpRm, // xxx *r16/r32/m32 : <opcode> <modrm> (<sib>) (<disp>) : 用于跳转指令
+    Rm, // xxx r/m : <opcode> <modrm> (<sib>) (<disp>) : bool 表示 m 时是否需要后缀
+    Mem, // xxx m : <opcode> <modrm> (<sib>) (<disp>) : bool 表示 m 时是否需要后缀
     Reg, // xxx reg : <opcode> <modrm> : 通用寄存器
-    Imm(bool), // xxx imm : <opcode> <imm> : bool 表示是否需要后缀, 若仅仅只有一种操作数, 则不需要后缀, 此时二进制格式也不需要 0x66 前缀
+    Imm(bool), // xxx imm : <opcode> <imm> : bool 表示 16 位操作数时是否需要加 0x66 前缀, 因为 ret imm16 就不需要
     Rel, // xxx label : <opcode> <imm> : 用于跳转指令, 未来可能添加 relaxation 功能
     // 2 个操作数 (src, dest)
     RegRm, // xxx reg, r/m : <opcode> <modrm> (<sib>) (<disp>)
@@ -35,6 +34,7 @@ pub struct InstructionInfo {
     pub modrm_opcode: Option<u8>,
     pub operand_size: Size, // size 为 word 时要加前缀, 对于 Zero 的指令, 有可能隐含操作数, 因而也要加前缀
     pub operand_encoding: OperandEncoding,
+    pub is_default: bool, // 当操作数大小无法确定时, 是否要作为默认使用
 }
 
 #[derive(PartialEq, Eq)]
@@ -52,7 +52,7 @@ pub struct RegisterInfo {
 }
 
 macro_rules! instruction_map {
-    ( $( $name:expr => [ $( ( $opcode:expr, $modrm_opcode:expr, $size:expr, $encoding:expr ) ),* $(,)? ] ),* $(,)? ) => {
+    ( $( $name:expr => [ $( ( $opcode:expr, $modrm_opcode:expr, $size:expr, $encoding:expr $(, $is:expr)? ) ),* $(,)? ] ),* $(,)? ) => {
         HashMap::from([
             $((
                 $name,
@@ -61,6 +61,7 @@ macro_rules! instruction_map {
                     modrm_opcode: $modrm_opcode,
                     operand_size: $size,
                     operand_encoding: $encoding,
+                    is_default: false $( || $is)?,
                 } ),* ]
             )),*
         ])
@@ -157,25 +158,25 @@ lazy_static! {
     };
 
     static ref INSTRUCTION_INFOS: HashMap<&'static str, Vec<InstructionInfo>> = instruction_map! {
-        // "mnemonic" => [ ( opcode, modrm_opcode, size, operand_encoding ),* ]
+        // "mnemonic" => [ ( opcode, modrm_opcode, size, operand_encoding (, is_defalut)? ),* ]
         "nop" => [
-            (vec![0x90], None, Size::Byte, OperandEncoding::Zero), // nop
+            (vec![0x90], None, Size::Byte, OperandEncoding::Zero, true), // nop
         ],
         "ret" => [
-            (vec![0xc3], None, Size::Byte, OperandEncoding::Zero), // ret
-            (vec![0xc2], None, Size::Word, OperandEncoding::Imm(false)), // ret imm16
+            (vec![0xc3], None, Size::Byte, OperandEncoding::Zero, true), // ret
+            (vec![0xc2], None, Size::Word, OperandEncoding::Imm(false), true), // ret imm16
         ],
         "int" => [
-            (vec![0xcd], None, Size::Byte, OperandEncoding::Imm(false)), // int imm8
+            (vec![0xcd], None, Size::Byte, OperandEncoding::Imm(false), true), // int imm8
         ],
         "int3" => [
-            (vec![0xcc], None, Size::Byte, OperandEncoding::Zero), // int3
+            (vec![0xcc], None, Size::Byte, OperandEncoding::Zero, true), // int3
         ],
         "int1" => [
-            (vec![0xf1], None, Size::Byte, OperandEncoding::Zero), // int1
+            (vec![0xf1], None, Size::Byte, OperandEncoding::Zero, true), // int1
         ],
         "into" => [
-            (vec![0xce], None, Size::Byte, OperandEncoding::Zero), // into
+            (vec![0xce], None, Size::Byte, OperandEncoding::Zero, true), // into
         ],
         "pop" => [
             (vec![0x58], None, Size::Word, OperandEncoding::Opcode), // popw r16
@@ -218,7 +219,7 @@ lazy_static! {
             (vec![0x8b], None, Size::DoubleWord, OperandEncoding::RmReg), // movb r/m32, r32
             (vec![0x8c], None, Size::Word, OperandEncoding::SregRm), // movw sreg, r/m16
             (vec![0x8c], None, Size::DoubleWord, OperandEncoding::SregRm), // movl sreg, r/m32
-            (vec![0x8e], None, Size::Word, OperandEncoding::RmSreg), // movw r/m16, sreg
+            (vec![0x8e], None, Size::Word, OperandEncoding::RmSreg, true), // movw r/m16, sreg
             (vec![0xb0], None, Size::Byte, OperandEncoding::ImmOpcode), // movb imm8, r8
             (vec![0xb8], None, Size::Word, OperandEncoding::ImmOpcode), // movw imm16, r16
             (vec![0xb8], None, Size::DoubleWord, OperandEncoding::ImmOpcode), // movl imm32, r32
@@ -246,30 +247,30 @@ lazy_static! {
         ],
         "jmp" => [
             (vec![0xe8], None, Size::Byte, OperandEncoding::Rel), // jmp rel8
-            (vec![0xe9], None, Size::DoubleWord, OperandEncoding::Rel), // jmp rel32
-            (vec![0xff], Some(4), Size::Word, OperandEncoding::JmpRm), // jmp *r/m16
-            (vec![0xff], Some(4), Size::DoubleWord, OperandEncoding::JmpRm), // jmp *r/m32
+            (vec![0xe9], None, Size::DoubleWord, OperandEncoding::Rel, true), // jmp rel32
+            (vec![0xff], Some(4), Size::Word, OperandEncoding::Rm), // jmp *r/m16
+            (vec![0xff], Some(4), Size::DoubleWord, OperandEncoding::Rm, true), // jmp *r/m32
         ],
         "call" => [
-            (vec![0xe8], None, Size::DoubleWord, OperandEncoding::Rel), // call rel32
-            (vec![0xff], Some(2), Size::Word, OperandEncoding::JmpRm), // call *r/m16
-            (vec![0xff], Some(2), Size::DoubleWord, OperandEncoding::JmpRm), // call *r/m32
+            (vec![0xe8], None, Size::DoubleWord, OperandEncoding::Rel, true), // call rel32
+            (vec![0xff], Some(2), Size::Word, OperandEncoding::Rm), // call *r/m16
+            (vec![0xff], Some(2), Size::DoubleWord, OperandEncoding::Rm, true), // call *r/m32
         ],
         "pusha" => [ // push 所有通用寄存器
-            (vec![0x60], None, Size::DoubleWord, OperandEncoding::Zero), // pusha/pushal : 32 位在前因为 32 位优先
             (vec![0x60], None, Size::Word, OperandEncoding::Zero), // pushaw
+            (vec![0x60], None, Size::DoubleWord, OperandEncoding::Zero, true), // pusha/pushal
         ],
         "popa" => [ // pop 所有通用寄存器
-            (vec![0x61], None, Size::DoubleWord, OperandEncoding::Zero), // popa/popal : 32 位在前因为 32 位优先
             (vec![0x61], None, Size::Word, OperandEncoding::Zero), // popaw
+            (vec![0x61], None, Size::DoubleWord, OperandEncoding::Zero, true), // popa/popal
         ],
         "pushf" => [ // push eflags/flags
-            (vec![0x9c], None, Size::DoubleWord, OperandEncoding::Zero), // pushf/pushfl : 32 位在前因为 32 位优先
             (vec![0x9c], None, Size::Word, OperandEncoding::Zero), // pushfw
+            (vec![0x9c], None, Size::DoubleWord, OperandEncoding::Zero, true), // pushf/pushfl
         ],
         "popf" => [ // pop eflags/flags
-            (vec![0x9d], None, Size::DoubleWord, OperandEncoding::Zero), // popf/popfl : 32 位在前因为 32 位优先
             (vec![0x9d], None, Size::Word, OperandEncoding::Zero), // popfw
+            (vec![0x9d], None, Size::DoubleWord, OperandEncoding::Zero, true), // popf/popfl
         ],
     };
 }
