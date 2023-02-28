@@ -1180,6 +1180,24 @@ mod tests_inst_gen {
             ]
         );
     }
+
+    #[test]
+    fn test_jcc() {
+        let code = assemble_instruction(
+            r#"
+                ja label
+                jc label
+                label:
+            "#.trim()
+        );
+        assert_eq!(
+            &code,
+            &[
+                0x0f, 0x87, 0x06, 0x00, 0x00, 0x00, // ja label
+                0x0f, 0x82, 0x00, 0x00, 0x00, 0x00, // jb label ; (jc label)
+            ]
+        );
+    }
 }
 
 #[cfg(test)]

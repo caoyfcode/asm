@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use lazy_static::lazy_static;
 
@@ -68,11 +68,21 @@ macro_rules! instruction_map {
     };
 }
 
-macro_rules! register_map {
+macro_rules! hash_map {
     ( $( $name:expr => $info:expr ),* $(,)? ) => {
         HashMap::from([
             $(
                 ($name, $info)
+            ),*
+        ])
+    }
+}
+
+macro_rules! hash_set {
+    ( $( $ele:expr ),* $(,)? ) => {
+        HashSet::from([
+            $(
+                $ele
             ),*
         ])
     }
@@ -83,7 +93,11 @@ lazy_static! {
     static ref MNEMONICS_WITHOUT_SIZE: Vec<&'static str> = vec![
         "ret", "nop",
         "int", "int3", "int1", "into", "dec", "inc",
-        "ja", "jae", "jb", "jbe", "je", "jna", "jnae", "jnb", "jnbe", "jne"
+        // jcc
+        "ja", "jae", "jb", "jbe", "je", "jg", "jge",
+        "jl", "jle", "jne", "jno", "jnp", "jns", "jo", "jp", "js",
+        "jc", "jna", "jnae", "jnb", "jnbe", "jnc", "jng", "jnge",
+        "jnl", "jnle", "jnz", "jpe", "jpo", "jz",
     ];
 
     // 所有可能带大小后缀的指令
@@ -112,12 +126,16 @@ lazy_static! {
     ];
 
     // 跳转指令(操作数语法与一般指令不同)的助记符
-    static ref JUMP_MNEMONICS: Vec<&'static str> = vec![
+    static ref JUMP_MNEMONICS: HashSet<&'static str> = hash_set![
         "jmp", "call",
-        "ja", "jae", "jb", "jbe", "je", "jna", "jnae", "jnb", "jnbe", "jne"
+        "ja", "jae", "jb", "jbe", "je", "jg", "jge",
+        "jl", "jle", "jne", "jno", "jnp", "jns", "jo", "jp", "js",
+        // alias
+        "jc", "jna", "jnae", "jnb", "jnbe", "jnc", "jng", "jnge",
+        "jnl", "jnle", "jnz", "jpe", "jpo", "jz",
     ];
 
-    static ref REGISTER_INFOS: HashMap<&'static str, RegisterInfo> = register_map! {
+    static ref REGISTER_INFOS: HashMap<&'static str, RegisterInfo> = hash_map! {
         // 通用寄存器, code 可以用于 modrm, sib 与 opcode+rd
         "eax" => RegisterInfo { code: 0, size: Size::DoubleWord, kind: RegisterKind::GeneralPurpose },
         "ecx" => RegisterInfo { code: 1, size: Size::DoubleWord, kind: RegisterKind::GeneralPurpose },
@@ -177,6 +195,22 @@ lazy_static! {
         ],
         "into" => [
             (vec![0xce], None, Size::Byte, OperandEncoding::Zero, true), // into
+        ],
+        "pusha" => [ // push 所有通用寄存器
+            (vec![0x60], None, Size::Word, OperandEncoding::Zero), // pushaw
+            (vec![0x60], None, Size::DoubleWord, OperandEncoding::Zero, true), // pusha/pushal
+        ],
+        "popa" => [ // pop 所有通用寄存器
+            (vec![0x61], None, Size::Word, OperandEncoding::Zero), // popaw
+            (vec![0x61], None, Size::DoubleWord, OperandEncoding::Zero, true), // popa/popal
+        ],
+        "pushf" => [ // push eflags/flags
+            (vec![0x9c], None, Size::Word, OperandEncoding::Zero), // pushfw
+            (vec![0x9c], None, Size::DoubleWord, OperandEncoding::Zero, true), // pushf/pushfl
+        ],
+        "popf" => [ // pop eflags/flags
+            (vec![0x9d], None, Size::Word, OperandEncoding::Zero), // popfw
+            (vec![0x9d], None, Size::DoubleWord, OperandEncoding::Zero, true), // popf/popfl
         ],
         "pop" => [
             (vec![0x58], None, Size::Word, OperandEncoding::Opcode), // popw r16
@@ -247,31 +281,115 @@ lazy_static! {
         ],
         "jmp" => [
             (vec![0xe8], None, Size::Byte, OperandEncoding::Rel), // jmp rel8
+            (vec![0xe9], None, Size::Word, OperandEncoding::Rel), // jmp rel16
             (vec![0xe9], None, Size::DoubleWord, OperandEncoding::Rel, true), // jmp rel32
             (vec![0xff], Some(4), Size::Word, OperandEncoding::Rm), // jmp *r/m16
             (vec![0xff], Some(4), Size::DoubleWord, OperandEncoding::Rm, true), // jmp *r/m32
         ],
         "call" => [
+            (vec![0xe8], None, Size::Word, OperandEncoding::Rel), // call rel16
             (vec![0xe8], None, Size::DoubleWord, OperandEncoding::Rel, true), // call rel32
             (vec![0xff], Some(2), Size::Word, OperandEncoding::Rm), // call *r/m16
             (vec![0xff], Some(2), Size::DoubleWord, OperandEncoding::Rm, true), // call *r/m32
         ],
-        "pusha" => [ // push 所有通用寄存器
-            (vec![0x60], None, Size::Word, OperandEncoding::Zero), // pushaw
-            (vec![0x60], None, Size::DoubleWord, OperandEncoding::Zero, true), // pusha/pushal
+        // jcc
+        "ja" => [
+            (vec![0x77], None, Size::Byte, OperandEncoding::Rel),
+            (vec![0x0f, 0x87], None, Size::Word, OperandEncoding::Rel),
+            (vec![0x0f, 0x87], None, Size::DoubleWord, OperandEncoding::Rel, true),
         ],
-        "popa" => [ // pop 所有通用寄存器
-            (vec![0x61], None, Size::Word, OperandEncoding::Zero), // popaw
-            (vec![0x61], None, Size::DoubleWord, OperandEncoding::Zero, true), // popa/popal
+        "jae" => [
+            (vec![0x73], None, Size::Byte, OperandEncoding::Rel),
+            (vec![0x0f, 0x83], None, Size::Word, OperandEncoding::Rel),
+            (vec![0x0f, 0x83], None, Size::DoubleWord, OperandEncoding::Rel, true),
         ],
-        "pushf" => [ // push eflags/flags
-            (vec![0x9c], None, Size::Word, OperandEncoding::Zero), // pushfw
-            (vec![0x9c], None, Size::DoubleWord, OperandEncoding::Zero, true), // pushf/pushfl
+        "jb" => [
+            (vec![0x72], None, Size::Byte, OperandEncoding::Rel),
+            (vec![0x0f, 0x82], None, Size::Word, OperandEncoding::Rel),
+            (vec![0x0f, 0x82], None, Size::DoubleWord, OperandEncoding::Rel, true),
         ],
-        "popf" => [ // pop eflags/flags
-            (vec![0x9d], None, Size::Word, OperandEncoding::Zero), // popfw
-            (vec![0x9d], None, Size::DoubleWord, OperandEncoding::Zero, true), // popf/popfl
+        "jbe" => [
+            (vec![0x76], None, Size::Byte, OperandEncoding::Rel),
+            (vec![0x0f, 0x86], None, Size::Word, OperandEncoding::Rel),
+            (vec![0x0f, 0x86], None, Size::DoubleWord, OperandEncoding::Rel, true),
         ],
+        "je" => [
+            (vec![0x74], None, Size::Byte, OperandEncoding::Rel),
+            (vec![0x0f, 0x84], None, Size::Word, OperandEncoding::Rel),
+            (vec![0x0f, 0x84], None, Size::DoubleWord, OperandEncoding::Rel, true),
+        ],
+        "jg" => [
+            (vec![0x7f], None, Size::Byte, OperandEncoding::Rel),
+            (vec![0x0f, 0x8f], None, Size::Word, OperandEncoding::Rel),
+            (vec![0x0f, 0x8f], None, Size::DoubleWord, OperandEncoding::Rel, true),
+        ],
+        "jge" => [
+            (vec![0x7d], None, Size::Byte, OperandEncoding::Rel),
+            (vec![0x0f, 0x8d], None, Size::Word, OperandEncoding::Rel),
+            (vec![0x0f, 0x8d], None, Size::DoubleWord, OperandEncoding::Rel, true),
+        ],
+        "jl" => [
+            (vec![0x7c], None, Size::Byte, OperandEncoding::Rel),
+            (vec![0x0f, 0x8c], None, Size::Word, OperandEncoding::Rel),
+            (vec![0x0f, 0x8c], None, Size::DoubleWord, OperandEncoding::Rel, true),
+        ],
+        "jle" => [
+            (vec![0x7e], None, Size::Byte, OperandEncoding::Rel),
+            (vec![0x0f, 0x8e], None, Size::Word, OperandEncoding::Rel),
+            (vec![0x0f, 0x8e], None, Size::DoubleWord, OperandEncoding::Rel, true),
+        ],
+        "jne" => [
+            (vec![0x75], None, Size::Byte, OperandEncoding::Rel),
+            (vec![0x0f, 0x85], None, Size::Word, OperandEncoding::Rel),
+            (vec![0x0f, 0x85], None, Size::DoubleWord, OperandEncoding::Rel, true),
+        ],
+        "jno" => [
+            (vec![0x71], None, Size::Byte, OperandEncoding::Rel),
+            (vec![0x0f, 0x81], None, Size::Word, OperandEncoding::Rel),
+            (vec![0x0f, 0x81], None, Size::DoubleWord, OperandEncoding::Rel, true),
+        ],
+        "jnp" => [
+            (vec![0x7b], None, Size::Byte, OperandEncoding::Rel),
+            (vec![0x0f, 0x8b], None, Size::Word, OperandEncoding::Rel),
+            (vec![0x0f, 0x8b], None, Size::DoubleWord, OperandEncoding::Rel, true),
+        ],
+        "jns" => [
+            (vec![0x79], None, Size::Byte, OperandEncoding::Rel),
+            (vec![0x0f, 0x89], None, Size::Word, OperandEncoding::Rel),
+            (vec![0x0f, 0x89], None, Size::DoubleWord, OperandEncoding::Rel, true),
+        ],
+        "jo" => [
+            (vec![0x70], None, Size::Byte, OperandEncoding::Rel),
+            (vec![0x0f, 0x80], None, Size::Word, OperandEncoding::Rel),
+            (vec![0x0f, 0x80], None, Size::DoubleWord, OperandEncoding::Rel, true),
+        ],
+        "jp" => [
+            (vec![0x7a], None, Size::Byte, OperandEncoding::Rel),
+            (vec![0x0f, 0x8a], None, Size::Word, OperandEncoding::Rel),
+            (vec![0x0f, 0x8a], None, Size::DoubleWord, OperandEncoding::Rel, true),
+        ],
+        "js" => [
+            (vec![0x78], None, Size::Byte, OperandEncoding::Rel),
+            (vec![0x0f, 0x88], None, Size::Word, OperandEncoding::Rel),
+            (vec![0x0f, 0x88], None, Size::DoubleWord, OperandEncoding::Rel, true),
+        ],
+    };
+
+    static ref INSTRUCTION_ALIAS: HashMap<&'static str, &'static str> = hash_map! {
+        "jc" => "jb",
+        "jna" => "jbe",
+        "jnae" => "jb",
+        "jnb" => "jae",
+        "jnbe" => "ja",
+        "jnc" => "jae",
+        "jng" => "jle",
+        "jnge" => "jl",
+        "jnl" => "jge",
+        "jnle" => "jg",
+        "jnz" => "jne",
+        "jpe" => "jp",
+        "jpo" => "jnp",
+        "jz" => "je",
     };
 }
 
@@ -300,6 +418,10 @@ pub fn info_of_register(name: &str) -> Option<&'static RegisterInfo> {
 }
 
 pub fn infos_of_instruction(mnemonic: &str) -> Option<&'static Vec<InstructionInfo>> {
+    let mnemonic = match INSTRUCTION_ALIAS.get(mnemonic) {
+        Some(mne) => *mne,
+        None => mnemonic,
+    };
     INSTRUCTION_INFOS.get(mnemonic)
 }
 
