@@ -33,7 +33,7 @@ pub enum OperandEncoding {
 pub struct InstructionInfo {
     pub opcode: Vec<u8>,
     pub modrm_opcode: Option<u8>,
-    pub operand_size: Size, // size 为 word 时要加前缀, 对于无操作数的指令, 此位无意义
+    pub operand_size: Size, // size 为 word 时要加前缀, 对于 Zero 的指令, 有可能隐含操作数, 因而也要加前缀
     pub operand_encoding: OperandEncoding,
 }
 
@@ -80,8 +80,6 @@ macro_rules! register_map {
 lazy_static! {
     // 所有不带大小后缀的指令
     static ref MNEMONICS_WITHOUT_SIZE: Vec<&'static str> = vec![
-        "pusha", "pushad", "pushf", "pushfd",
-        "popa", "popad", "popf", "popfd",
         "ret", "nop",
         "int", "int3", "int1", "into", "dec", "inc",
         "ja", "jae", "jb", "jbe", "je", "jna", "jnae", "jnb", "jnbe", "jne"
@@ -89,9 +87,9 @@ lazy_static! {
 
     // 所有可能带大小后缀的指令
     static ref MNEMONICS_WITH_SIZE: Vec<&'static str> = vec![
-        "pop", "push", "mul", "div",
-        "mov", "cmp", "add", "sub", "or", "xor", "test", "lea",
-        "imul", "idiv",
+        "pusha", "pushf", "popa", "popf",
+        "pop", "push",
+        "mov", "add", "lea",
         "jmp", "call",
     ];
 
@@ -256,6 +254,22 @@ lazy_static! {
             (vec![0xe8], None, Size::DoubleWord, OperandEncoding::Rel), // call rel32
             (vec![0xff], Some(2), Size::Word, OperandEncoding::JmpRm), // call *r/m16
             (vec![0xff], Some(2), Size::DoubleWord, OperandEncoding::JmpRm), // call *r/m32
+        ],
+        "pusha" => [ // push 所有通用寄存器
+            (vec![0x60], None, Size::DoubleWord, OperandEncoding::Zero), // pusha/pushal : 32 位在前因为 32 位优先
+            (vec![0x60], None, Size::Word, OperandEncoding::Zero), // pushaw
+        ],
+        "popa" => [ // pop 所有通用寄存器
+            (vec![0x61], None, Size::DoubleWord, OperandEncoding::Zero), // popa/popal : 32 位在前因为 32 位优先
+            (vec![0x61], None, Size::Word, OperandEncoding::Zero), // popaw
+        ],
+        "pushf" => [ // push eflags/flags
+            (vec![0x9c], None, Size::DoubleWord, OperandEncoding::Zero), // pushf/pushfl : 32 位在前因为 32 位优先
+            (vec![0x9c], None, Size::Word, OperandEncoding::Zero), // pushfw
+        ],
+        "popf" => [ // pop eflags/flags
+            (vec![0x9d], None, Size::DoubleWord, OperandEncoding::Zero), // popf/popfl : 32 位在前因为 32 位优先
+            (vec![0x9d], None, Size::Word, OperandEncoding::Zero), // popfw
         ],
     };
 }

@@ -387,14 +387,12 @@ impl Generator {
         // 此时要么不存在助记符后缀, 要么后缀与 info.operand_size 相同
         match info.operand_encoding {
             OperandEncoding::Zero => {
-                if size.is_some() {
-                    return None;
-                }
                 if operands.len() != 0 {
                     return None;
                 }
                 Instruction::builder()
                     .opcode(&info.opcode)
+                    .operand_size_override(info.operand_size == Size::Word) // 如 pusha 需要前缀
                     .build()
             },
             OperandEncoding::Opcode => {
@@ -1167,6 +1165,23 @@ mod tests_inst_gen {
             "movw (%eax), %es"
         );
         assert_eq!(&code, &[0x8e, 0x00]);
+    }
+
+    // 以下为特殊指令的测试
+
+    #[test]
+    fn test_pusha() {
+        let code = assemble_instruction(
+            "pusha\npushal\npushaw"
+        );
+        assert_eq!(
+            &code,
+            &[
+                0x60, // pusha
+                0x60, // pushal
+                0x66, 0x60, // pushaw
+            ]
+        );
     }
 }
 
