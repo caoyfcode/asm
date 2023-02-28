@@ -419,9 +419,14 @@ impl Generator {
                     .opcode(&info.opcode)
                     .build()
             },
-            OperandEncoding::Rm => {
+            OperandEncoding::Rm | OperandEncoding::Mem | OperandEncoding::JmpRm => {
                 if operands.len() != 1 || !operands[0].is_rm() {
                     return None;
+                }
+                if let OperandEncoding::Mem = info.operand_encoding {
+                    if !operands[0].is_mem() {
+                        return None;
+                    }
                 }
                 let builder = Instruction::builder()
                     .opcode(&info.opcode)
@@ -437,29 +442,19 @@ impl Generator {
                         .build()
                 } else { // mem
                     if size.is_none() {
-                        return None;
+                        if let OperandEncoding::JmpRm = info.operand_encoding { // 当 jmp *mem 时, 若无后缀, 视为 l
+                            if info.operand_size != Size::DoubleWord {
+                                return None;
+                            }
+                        } else {
+                            return None;
+                        }
                     }
                     let mem = self.get_mem_operand(&operands[0])?;
                     builder.modrm_rm_m(mem.disp, mem.base, mem.index_scale)
                         .segment_override(mem.seg)
                         .build()
                 }
-            },
-            OperandEncoding::Mem => {
-                if operands.len() != 1 || !operands[0].is_mem() {
-                    return None;
-                }
-                if size.is_none() {
-                    return None;
-                }
-                let mem = self.get_mem_operand(&operands[0])?;
-                Instruction::builder()
-                    .opcode(&info.opcode)
-                    .modrm_reg_opcode(info.modrm_opcode.unwrap())
-                    .modrm_rm_m(mem.disp, mem.base, mem.index_scale)
-                    .operand_size_override(info.operand_size == Size::Word)
-                    .segment_override(mem.seg)
-                    .build()
             },
             OperandEncoding::Reg => {
                 if operands.len() != 1 || !operands[0].is_greg() {
@@ -512,11 +507,21 @@ impl Generator {
                     .operand_size_override(info.operand_size == Size::Word)
                     .build()
             },
-            OperandEncoding::RegRm => {
-                if operands.len() != 2 || !operands[0].is_greg() || !operands[1].is_rm() {
+            OperandEncoding::RegRm | OperandEncoding::RmReg | OperandEncoding::MemReg => {
+                let (reg_index, rm_index) = if let OperandEncoding::RegRm = info.operand_encoding {
+                    (0usize, 1usize)
+                } else {
+                    (1usize, 0usize)
+                };
+                if operands.len() != 2 || !operands[reg_index].is_greg() || !operands[rm_index].is_rm() {
                     return None;
                 }
-                let reg = operands[0].get_register_info().unwrap();
+                if let OperandEncoding::MemReg = info.operand_encoding {
+                    if !operands[rm_index].is_mem() {
+                        return None;
+                    }
+                }
+                let reg = operands[reg_index].get_register_info().unwrap();
                 if reg.size != info.operand_size {
                     return None;
                 }
@@ -524,73 +529,34 @@ impl Generator {
                     .opcode(&info.opcode)
                     .modrm_reg_opcode(reg.code)
                     .operand_size_override(info.operand_size == Size::Word);
-                if operands[1].is_greg() { // r
-                    let reg_info = operands[1].get_register_info().unwrap();
+                if operands[rm_index].is_greg() { // r
+                    let reg_info = operands[rm_index].get_register_info().unwrap();
                     if reg_info.size != info.operand_size {
                         return None;
                     }
                     builder.modrm_rm_r(reg_info.code)
                         .build()
                 } else { // m
-                    let mem = self.get_mem_operand(&operands[1])?;
+                    let mem = self.get_mem_operand(&operands[rm_index])?;
                     builder.modrm_rm_m(mem.disp, mem.base, mem.index_scale)
                         .segment_override(mem.seg)
                         .build()
                 }
             },
-            OperandEncoding::RmReg => {
-                if operands.len() != 2 || !operands[0].is_rm() || !operands[1].is_greg() {
+            OperandEncoding::MoffsA | OperandEncoding::AMoffs => {
+                let (moffs_index, a_index) = if let OperandEncoding::MoffsA = info.operand_encoding {
+                    (0usize, 1usize)
+                } else {
+                    (1usize, 0usize)
+                };
+                if operands.len() != 2 || !operands[moffs_index].is_mem() || !operands[a_index].is_register_a() {
                     return None;
                 }
-                let reg = operands[1].get_register_info().unwrap();
-                if reg.size != info.operand_size {
-                    return None;
-                }
-                let builder = Instruction::builder()
-                    .opcode(&info.opcode)
-                    .modrm_reg_opcode(reg.code)
-                    .operand_size_override(info.operand_size == Size::Word);
-                if operands[0].is_greg() { // r
-                    let reg_info = operands[0].get_register_info().unwrap();
-                    if reg_info.size != info.operand_size {
-                        return None;
-                    }
-                    builder.modrm_rm_r(reg_info.code)
-                        .build()
-                } else { // m
-                    let mem = self.get_mem_operand(&operands[0])?;
-                    builder.modrm_rm_m(mem.disp, mem.base, mem.index_scale)
-                        .segment_override(mem.seg)
-                        .build()
-                }
-            },
-            OperandEncoding::MoffsA => {
-                if operands.len() != 2 || !operands[0].is_mem() || !operands[1].is_register_a() {
-                    return None;
-                }
-                let reg_a = operands[1].get_register_info().unwrap();
+                let reg_a = operands[a_index].get_register_info().unwrap();
                 if reg_a.size != info.operand_size {
                     return None;
                 }
-                let mem = self.get_mem_operand(&operands[0])?;
-                if mem.disp.is_none() || mem.base.is_some() || mem.index_scale.is_some() || mem.seg.is_some() {
-                    return None;
-                }
-                Instruction::builder()
-                    .opcode(&info.opcode)
-                    .immediate(mem.disp.unwrap(), Size::DoubleWord) // 本应是 opcode 后接着 disp32, 这样能达到同样效果
-                    .operand_size_override(info.operand_size == Size::Word)
-                    .build()
-            },
-            OperandEncoding::AMoffs => {
-                if operands.len() != 2 || !operands[0].is_register_a() || !operands[1].is_mem() {
-                    return None;
-                }
-                let reg_a = operands[0].get_register_info().unwrap();
-                if reg_a.size != info.operand_size {
-                    return None;
-                }
-                let mem = self.get_mem_operand(&operands[1])?;
+                let mem = self.get_mem_operand(&operands[moffs_index])?;
                 if mem.disp.is_none() || mem.base.is_some() || mem.index_scale.is_some() || mem.seg.is_some() {
                     return None;
                 }
@@ -648,24 +614,6 @@ impl Generator {
                         .build()
                 }
             },
-            OperandEncoding::MemReg => {
-                if operands.len() != 2 || !operands[0].is_mem() || !operands[1].is_greg() {
-                    return None;
-                }
-                let reg = operands[1].get_register_info().unwrap();
-                if reg.size != info.operand_size {
-                    return None;
-                }
-                let mem = self.get_mem_operand(&operands[0])?;
-                Instruction::builder()
-                    .opcode(&info.opcode)
-                    .modrm_reg_opcode(reg.code)
-                    .operand_size_override(info.operand_size == Size::Word)
-                    .modrm_rm_m(mem.disp, mem.base, mem.index_scale)
-                    .segment_override(mem.seg)
-                    .build()
-
-            },
             OperandEncoding::ImmA => {
                 if operands.len() != 2 || !operands[0].is_imm() || !operands[1].is_register_a() {
                     return None;
@@ -681,54 +629,35 @@ impl Generator {
                     .operand_size_override(info.operand_size == Size::Word)
                     .build()
             },
-            OperandEncoding::SregRm => {
-                if operands.len() != 2 || !operands[0].is_sreg() || !operands[1].is_rm() {
+            OperandEncoding::SregRm | OperandEncoding::RmSreg => {
+                let (sreg_index, rm_index) = if let OperandEncoding::SregRm = info.operand_encoding {
+                    (0usize, 1usize)
+                } else {
+                    (1usize, 0usize)
+                };
+                if operands.len() != 2 || !operands[sreg_index].is_sreg() || !operands[rm_index].is_rm() {
                     return None;
                 }
-                let sreg = operands[0].get_register_info().unwrap();
+                let sreg = operands[sreg_index].get_register_info().unwrap();
                 let builder = Instruction::builder()
                     .opcode(&info.opcode)
-                    .modrm_reg_opcode(sreg.code)
-                    .operand_size_override(info.operand_size == Size::Word);
-                if operands[1].is_greg() { // r
-                    let reg_info = operands[1].get_register_info().unwrap();
+                    .modrm_reg_opcode(sreg.code);
+                if operands[rm_index].is_greg() { // r
+                    let reg_info = operands[rm_index].get_register_info().unwrap();
                     if reg_info.size != info.operand_size {
                         return None;
                     }
                     builder.modrm_rm_r(reg_info.code)
+                        .operand_size_override(info.operand_size == Size::Word)
                         .build()
                 } else { // m
                     if size.is_none() {
                         return None;
                     }
-                    let mem = self.get_mem_operand(&operands[1])?;
+                    let mem = self.get_mem_operand(&operands[rm_index])?;
                     builder.modrm_rm_m(mem.disp, mem.base, mem.index_scale)
                         .segment_override(mem.seg)
-                        .build()
-                }
-            },
-            OperandEncoding::RmSreg => {
-                if operands.len() != 2 || !operands[0].is_rm() || !operands[1].is_sreg() {
-                    return None;
-                }
-                let sreg = operands[1].get_register_info().unwrap();
-                let builder = Instruction::builder()
-                    .opcode(&info.opcode)
-                    .modrm_reg_opcode(sreg.code); // no operand size override
-                if operands[0].is_greg() { // r
-                    let reg_info = operands[0].get_register_info().unwrap();
-                    if reg_info.size != info.operand_size {
-                        return None;
-                    }
-                    builder.modrm_rm_r(reg_info.code)
-                        .build()
-                } else { // m
-                    if size.is_none() {
-                        return None;
-                    }
-                    let mem = self.get_mem_operand(&operands[0])?;
-                    builder.modrm_rm_m(mem.disp, mem.base, mem.index_scale)
-                        .segment_override(mem.seg)
+                        .operand_size_override(info.operand_size == Size::Word && rm_index == 1) // mem, sreg 不需要前缀, 因为只有 m16
                         .build()
                 }
             },
@@ -1100,12 +1029,13 @@ mod tests_inst_gen {
     }
 
     #[test]
-    fn test_rm_jmp() {
+    fn test_jmp_rm_jmp() {
         let code = assemble_instruction(
             r#"
                 jmp *%eax
                 jmpl *3
                 jmp *%ax
+                jmp *3
             "#.trim()
         );
         assert_eq!(
@@ -1114,6 +1044,7 @@ mod tests_inst_gen {
                 0xff, 0xe0, // jmp *%eax
                 0xff, 0x25, 0x03, 0x00, 0x00, 0x00, // jmp *3
                 0x66, 0xff, 0xe0, // jmp *eax
+                0xff, 0x25, 0x03, 0x00, 0x00, 0x00, // jmp *3
             ]
         );
     }

@@ -13,17 +13,18 @@ pub enum OperandEncoding {
     ImpliedSreg(&'static str), // pop/push Sreg : <opcode> : 不用加 0x66 前缀
     Rm, // xxx r/m : <opcode> <modrm> (<sib>) (<disp>)
     Mem, // xxx m : <opcode> <modrm> (<sib>) (<disp>)
+    JmpRm, // xxx *r16/r32/m32 : <opcode> <modrm> (<sib>) (<disp>) : 用于跳转指令
     Reg, // xxx reg : <opcode> <modrm> : 通用寄存器
     Imm(bool), // xxx imm : <opcode> <imm> : bool 表示是否需要后缀, 若仅仅只有一种操作数, 则不需要后缀, 此时二进制格式也不需要 0x66 前缀
-    Rel, // xxx rel : <opcode> <imm>
+    Rel, // xxx label : <opcode> <imm> : 用于跳转指令, 未来可能添加 relaxation 功能
     // 2 个操作数 (src, dest)
     RegRm, // xxx reg, r/m : <opcode> <modrm> (<sib>) (<disp>)
     RmReg, // xxx r/m, reg : <opcode> <modrm> (<sib>) (<disp>)
+    MemReg, // lea(w/l) m, reg : <opcode> <modrm> (<sib>) (<disp>)
     MoffsA, // xxx moffs, %al/%ax/%eax : <opcode> <disp32>
     AMoffs, // xxx %al/%ax/%eax, moffs : <opcode> <disp32>
     ImmOpcode, // xxx imm, reg : <opcode+rd> <imm>
     ImmRm, // xxx imm, r/m : <opcode> <modrm> (<sib>) (<disp>) <imm>
-    MemReg, // lea(w/l) m, reg : <opcode> <modrm> (<sib>) (<disp>)
     ImmA, // xxx imm, %al/%ax/%eax : <opcode> <imm>
     SregRm, // xxx Sreg, r/m(16|32) : <opcode> <modrm> (<sib>) (<disp>)
     RmSreg, // xxx r/m16, Sreg : <opcode> <modrm> (<sib>) (<disp>) : m16 时不用加 0x66 前缀
@@ -248,13 +249,13 @@ lazy_static! {
         "jmp" => [
             (vec![0xe8], None, Size::Byte, OperandEncoding::Rel), // jmp rel8
             (vec![0xe9], None, Size::DoubleWord, OperandEncoding::Rel), // jmp rel32
-            (vec![0xff], Some(4), Size::Word, OperandEncoding::Rm), // jmp *r/m16
-            (vec![0xff], Some(4), Size::DoubleWord, OperandEncoding::Rm), // jmp *r/m32
+            (vec![0xff], Some(4), Size::Word, OperandEncoding::JmpRm), // jmp *r/m16
+            (vec![0xff], Some(4), Size::DoubleWord, OperandEncoding::JmpRm), // jmp *r/m32
         ],
         "call" => [
             (vec![0xe8], None, Size::DoubleWord, OperandEncoding::Rel), // call rel32
-            (vec![0xff], Some(2), Size::Word, OperandEncoding::Rm), // call *r/m16
-            (vec![0xff], Some(2), Size::DoubleWord, OperandEncoding::Rm), // call *r/m32
+            (vec![0xff], Some(2), Size::Word, OperandEncoding::JmpRm), // call *r/m16
+            (vec![0xff], Some(2), Size::DoubleWord, OperandEncoding::JmpRm), // call *r/m32
         ],
     };
 }
