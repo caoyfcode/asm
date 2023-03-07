@@ -15,6 +15,7 @@ dependencies = [
 name = "assembler"
 version = "0.1.0"
 dependencies = [
+ "elf",
  "lazy_static",
  "regex",
 ]

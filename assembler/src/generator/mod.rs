@@ -2,10 +2,13 @@ mod table;
 mod data;
 mod instruction;
 
+use std::fs::File;
+
 use crate::ast::{Node, Visitor, ProgramNode, ProgramItem, InstructionNode, LabelNode, PseudoSectionNode, PseudoGlobalNode, PseudoEquNode, PseudoFillNode, PseudoIntegerNode, PseudoStringNode, PseudoCommNode, ValueNode, OperandNode, RegisterNode, MemNode};
 use crate::common::{Size, Error};
 use crate::config::{self, OperandEncoding, RegisterKind, InstructionInfo, RegisterInfo};
 
+use elf::Obj;
 use table::{SymbolTable, SymbolKind, Label};
 use data::Data;
 use instruction::Instruction;
@@ -80,7 +83,7 @@ struct RelocationInfo {
 }
 
 /// 用于访问语法树生成目标文件
-struct Generator {
+pub struct Generator {
     data_section: Vec<Data>,
     text_section: Vec<Instruction>,
     bss_section_size: u32,
@@ -92,7 +95,7 @@ struct Generator {
 }
 
 impl Generator {
-    fn new() -> Self {
+    pub fn new() -> Self {
         let mut table = SymbolTable::new();
         table.insert_label(Section::Text.name().to_string(), 0, Section::Text);
         table.insert_label(Section::Data.name().to_string(), 0, Section::Data);
@@ -106,6 +109,33 @@ impl Generator {
             current_offset: 0,
             line: 0,
         }
+    }
+
+    pub fn write_obj(&self, out: &mut File) -> Option<()> {
+        let (data_sec, data_rel) = self.generate_data_section();
+        let (text_sec, text_rel) = self.generate_text_section();
+        let bss_size = self.generate_bss_section_size();
+        let (labels, externals) = self.generate_symbol_table();
+
+        let mut obj = Obj::new();
+        obj.set_section_content(".text", text_sec)?;
+        obj.set_section_content(".data", data_sec)?;
+        obj.set_bss_size(bss_size);
+        for Label {name, offset, section, is_global } in labels {
+            obj.add_symbol(name, false, offset, section.name(), is_global)?;
+        }
+        for name in externals {
+            obj.add_symbol(name, true, 0, "", true)?;
+        }
+        for RelocationInfo { offset, name, is_relative } in text_rel {
+            obj.add_relocation(offset, ".text", &name, is_relative)?;
+        }
+        for RelocationInfo { offset, name, is_relative } in data_rel {
+            obj.add_relocation(offset, ".data", &name, is_relative)?;
+        }
+        obj.write(out);
+
+        Some(())
     }
 
     fn generate_data_section(&self) -> (Vec<u8>, Vec<RelocationInfo>) {
