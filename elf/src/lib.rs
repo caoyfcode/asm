@@ -57,7 +57,7 @@ pub struct Obj {
     text: Vec<u8>, // .text
     data: Vec<u8>, // .data
     bss_size: Word, // .bss
-    symbol_table: (Vec<Sym>, Vec<Sym>, Vec<Sym>), // .symtab (locals, globals, undefs)
+    symbol_table: (Vec<Sym>, Vec<Sym>), // .symtab (locals, globals)
     string_table: StringTable, // .strtab
     text_rel: Vec<Rel>, // .rel.text
     data_rel: Vec<Rel>, // .rel.data
@@ -71,7 +71,7 @@ impl Obj {
             text: Vec::new(),
             data: Vec::new(),
             bss_size: 0,
-            symbol_table: (Vec::new(), Vec::new(), Vec::new()),
+            symbol_table: (Vec::new(), Vec::new()),
             string_table: StringTable::new(),
             text_rel: Vec::new(),
             data_rel: Vec::new(),
@@ -83,7 +83,7 @@ impl Obj {
             st_name: index as Word,
             st_value: 0,
             st_size: 0,
-            st_info: st_info!(STB_GLOBAL, STT_NOTYPE),
+            st_info: st_info!(STB_LOCAL, STT_NOTYPE),
             st_other: 0,
             st_shndx: 0, // undef
         });
@@ -124,7 +124,7 @@ impl Obj {
         if is_undef {
             sym.st_info = st_info!(STB_GLOBAL, STT_NOTYPE);
             sym.st_shndx = 0; // undef
-            self.symbol_table.2.push(sym);
+            self.symbol_table.1.push(sym);
         } else {
             sym.st_shndx = match sec_name {
                 ".text" => 1,
@@ -182,10 +182,6 @@ impl Obj {
             map.insert(global.st_name as usize, index);
             index += 1;
         }
-        for undef in &self.symbol_table.2 {
-            map.insert(undef.st_name as usize, index);
-            index += 1;
-        }
         self.symbol_index = Some(map);
     }
 
@@ -205,8 +201,7 @@ impl Obj {
         let symtab_off = sh_off + 9 * size_of::<Shdr>();
         let strtab_off = symtab_off +
             (self.symbol_table.0.len() +
-            self.symbol_table.1.len() +
-            self.symbol_table.2.len()) * size_of::<Sym>();
+            self.symbol_table.1.len()) * size_of::<Sym>();
         let rel_text_off = strtab_off + self.string_table.size();
         let rel_data_off = rel_text_off + self.text_rel.len() * size_of::<Rel>();
 
@@ -303,8 +298,7 @@ impl Obj {
                 sh_addr: 0,
                 sh_offset: symtab_off as Off,
                 sh_size: ((self.symbol_table.0.len() +
-                    self.symbol_table.1.len() +
-                    self.symbol_table.2.len()) * size_of::<Sym>()) as Word,
+                    self.symbol_table.1.len()) * size_of::<Sym>()) as Word,
                 sh_link: 8, // string table
                 sh_info: self.symbol_table.0.len() as Word, // last local + 1
                 sh_addralign: 4,
@@ -359,7 +353,6 @@ impl Obj {
         // .symtab
         out.write_all(unsafe { serialize_slice(&self.symbol_table.0) }).unwrap(); // local
         out.write_all(unsafe { serialize_slice(&self.symbol_table.1) }).unwrap(); // global
-        out.write_all(unsafe { serialize_slice(&self.symbol_table.2) }).unwrap(); // undef
         // .strtab
         out.write_all(self.string_table.content()).unwrap();
         // .rel.text
@@ -423,7 +416,6 @@ unsafe fn serialize<T: Sized>(src: &T) -> &[u8] {
 }
 
 unsafe fn serialize_slice<T: Sized>(src: &[T]) -> &[u8] {
-    let p = std::ptr::addr_of!(*src);
     std::slice::from_raw_parts(
         src.as_ptr() as *const u8,
         size_of::<T>() * src.len()
