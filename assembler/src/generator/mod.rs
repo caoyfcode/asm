@@ -3,12 +3,12 @@ mod data;
 mod instruction;
 
 use std::fs::File;
+use elf::Elf;
 
 use crate::ast::{Node, Visitor, ProgramNode, ProgramItem, InstructionNode, LabelNode, PseudoSectionNode, PseudoGlobalNode, PseudoEquNode, PseudoFillNode, PseudoIntegerNode, PseudoStringNode, PseudoCommNode, ValueNode, OperandNode, RegisterNode, MemNode};
 use crate::common::{Size, Error};
 use crate::config::{self, OperandEncoding, RegisterKind, InstructionInfo, RegisterInfo};
 
-use elf::Obj;
 use table::{SymbolTable, SymbolKind, Label};
 use data::Data;
 use instruction::Instruction;
@@ -117,7 +117,7 @@ impl Generator {
         let bss_size = self.generate_bss_section_size();
         let (labels, externals) = self.generate_symbol_table();
 
-        let mut obj = Obj::new();
+        let mut obj = Elf::new();
         obj.set_section_content(".text", text_sec)?;
         obj.set_section_content(".data", data_sec)?;
         obj.set_bss_size(bss_size);
@@ -133,7 +133,7 @@ impl Generator {
         for RelocationInfo { offset, name, is_relative } in data_rel {
             obj.add_relocation(offset, ".data", &name, is_relative)?;
         }
-        obj.write(out);
+        obj.write_obj(out);
 
         Some(())
     }

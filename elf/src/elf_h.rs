@@ -23,6 +23,7 @@ pub type Versym = u32;
 pub const EI_NIDENT: usize = 16;
 
 #[repr(C)]
+#[derive(Clone, Copy)]
 pub struct Ehdr {
     pub e_ident: [u8; EI_NIDENT], /* Magic number and other info */
     pub e_type: Half, /* Object file type */
@@ -106,6 +107,7 @@ pub const EV_NUM: Word = 2;
 /* Section header.  */
 
 #[repr(C)]
+#[derive(Clone, Copy)]
 pub struct Shdr {
     pub sh_name: Word, /* Section name (string tbl index) */
     pub sh_type: Word, /* Section type */
@@ -149,6 +151,7 @@ pub const SHF_INFO_LINK: Word = 1 << 6; /* `sh_info' contains SHT index */
 /* Symbol table entry.  */
 
 #[repr(C)]
+#[derive(Clone, Copy)]
 pub struct Sym {
     pub st_name: Word, /* Symbol name (string tbl index) */
     pub st_value: Addr, /* Symbol value */
@@ -199,6 +202,7 @@ pub const STT_NUM: u8 = 7; /* Number of defined types.  */
 /* Relocation table entry without addend (in section of type SHT_REL).  */
 
 #[repr(C)]
+#[derive(Clone, Copy)]
 pub struct Rel {
     pub r_offset: Addr, /* Address */
     pub r_info: Word, /* Relocation type and symbol index */
@@ -237,6 +241,7 @@ pub const R_386_PLT32: u8 = 4; /* 32 bit PLT address */
 /* Program segment header.  */
 
 #[repr(C)]
+#[derive(Clone, Copy)]
 pub struct Phdr {
     pub p_type: Word, /* Segment type */
     pub p_offset: Off, /* Segment file offset */
