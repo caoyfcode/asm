@@ -48,7 +48,7 @@ pub struct Ehdr {
 pub const EI_MAG0: usize = 0; /* File identification byte 0 index */
 pub const ELFMAG0: u8 = 0x7f; /* Magic number byte 0 */
 
-pub const EI_MAG_1: usize = 1; /* File identification byte 1 index */
+pub const EI_MAG1: usize = 1; /* File identification byte 1 index */
 pub const ELFMAG1: u8 = 'E' as u8; /* Magic number byte 1 */
 
 pub const EI_MAG2: usize = 2; /* File identification byte 2 index */
@@ -163,18 +163,21 @@ pub struct Sym {
 
 /* How to extract and insert information held in the st_info field.  */
 
+#[macro_export]
 macro_rules! st_bind {
     ($val:expr) => {
         $val as u8 >> 4
     };
 }
 
+#[macro_export]
 macro_rules! st_type {
     ($val:expr) => {
         $val & 0x0f
     };
 }
 
+#[macro_export]
 macro_rules! st_info {
     ($bind:expr, $type:expr) => {
         (($bind as u8) << 4) + ($type as u8 & 0xf)
@@ -210,18 +213,21 @@ pub struct Rel {
 
 /* How to extract and insert information held in the r_info field.  */
 
+#[macro_export]
 macro_rules! r_sym {
     ($val:expr) => {
         $val >> 8
     };
 }
 
+#[macro_export]
 macro_rules! r_type {
     ($val:expr) => {
         $val & 0xff
     };
 }
 
+#[macro_export]
 macro_rules! r_info {
     ($sym:expr, $type:expr) => {
         (($sym as Word) << 8) + ($type as Word & 0xff)

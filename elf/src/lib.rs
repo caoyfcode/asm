@@ -488,7 +488,7 @@ impl Elf {
                 sh_name: shstrtab.get(&String::from(".text")).unwrap() as Word,
                 sh_type: SHT_PROGBITS,
                 sh_flags: SHF_ALLOC | SHF_EXECINSTR,
-                sh_addr: 0,
+                sh_addr: text_addr,
                 sh_offset: text_off as Off,
                 sh_size: self.text.len() as Word,
                 sh_link: 0,
@@ -500,7 +500,7 @@ impl Elf {
                 sh_name: shstrtab.get(&String::from(".data")).unwrap() as Word,
                 sh_type: SHT_PROGBITS,
                 sh_flags: SHF_ALLOC | SHF_WRITE,
-                sh_addr: 0,
+                sh_addr: data_addr,
                 sh_offset: data_off as Off,
                 sh_size: self.data.len() as Word,
                 sh_link: 0,
@@ -512,7 +512,7 @@ impl Elf {
                 sh_name: shstrtab.get(&String::from(".bss")).unwrap() as Word,
                 sh_type: SHT_NOBITS,
                 sh_flags: SHF_ALLOC | SHF_WRITE,
-                sh_addr: 0,
+                sh_addr: bss_addr,
                 sh_offset: bss_off as Off,
                 sh_size: self.bss_size,
                 sh_link: 0,
@@ -711,6 +711,56 @@ impl StringTable {
 
     fn size(&self) -> usize {
         self.content.len()
+    }
+}
+
+/// 表示一个符号
+pub struct Symbol {
+    pub name: String,
+    pub is_undef: bool,
+    pub value: u32,
+    pub sec_name: String,
+    pub is_global: bool,
+}
+
+impl Symbol {
+    pub fn new(
+        name: String,
+        is_undef: bool,
+        value: u32,
+        sec_name: String,
+        is_global: bool
+    ) -> Self {
+        Self {
+            name,
+            is_undef,
+            value,
+            sec_name,
+            is_global,
+        }
+    }
+}
+
+pub struct Relocation {
+    pub offset: u32,
+    pub section: String,
+    pub symbol: String,
+    pub is_relative: bool
+}
+
+impl Relocation {
+    pub fn new(
+        offset: u32,
+        section: String,
+        symbol: String,
+        is_relative: bool
+    ) -> Self {
+        Self {
+            offset,
+            section,
+            symbol,
+            is_relative,
+        }
     }
 }
 
