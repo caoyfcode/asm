@@ -1,6 +1,7 @@
-use crate::common::Size;
+use elf::Relocation;
 
-use super::{Statement, RelocationInfo, Value, Segment};
+use crate::common::Size;
+use super::{Statement, Value, Segment};
 
 pub(super) struct Instruction {
     prefix: Vec<u8>,
@@ -35,9 +36,9 @@ impl Statement for Instruction {
         len
     }
 
-    fn emit(&self) -> (Vec<u8>, Vec<RelocationInfo>) {
+    fn emit(&self) -> (Vec<u8>, Vec<Relocation>) {
         let mut text: Vec<u8> = Vec::with_capacity(self.length() as usize);
-        let mut rel: Vec<RelocationInfo> = Vec::new();
+        let mut rel: Vec<Relocation> = Vec::new();
         text.extend(self.prefix.iter());
         text.extend(self.opcode.iter());
         if let Some(modrm) = self.modrm {
@@ -71,7 +72,7 @@ impl Statement for Instruction {
                 text.push((addend >> 8) as u8);
                 text.push((addend >> 16) as u8);
                 text.push((addend >> 24) as u8);
-                rel.push(RelocationInfo { offset, name: name.clone(), is_relative: *is_relative })
+                rel.push(Relocation { offset, symbol: name.clone(), is_relative: *is_relative })
             }
             None => (),
         }
@@ -102,7 +103,7 @@ impl Statement for Instruction {
                 text.push((addend >> 8) as u8);
                 text.push((addend >> 16) as u8);
                 text.push((addend >> 24) as u8);
-                rel.push(RelocationInfo { offset, name: name.clone(), is_relative: *is_relative })
+                rel.push(Relocation { offset, symbol: name.clone(), is_relative: *is_relative })
             }
             None => (),
         }

@@ -1,5 +1,5 @@
 #[macro_use]
-mod elf_h; // 根据 elf.h 编写
+pub mod elf_h; // 根据 elf.h 编写
 
 /// ELF File
 ///
@@ -61,7 +61,7 @@ mod elf_h; // 根据 elf.h 编写
 
 use std::{collections::HashMap, fs::File, mem::size_of, io::Write};
 
-pub use elf_h::*;
+use elf_h::*;
 
 
 /// 表示目标文件或可执行文件
@@ -126,65 +126,68 @@ impl Elf {
         Some(())
     }
 
-    /// 在符号表添加一个符号, 必须是 .text 或 .data 或者 .bss 或者 undef 的
-    pub fn add_symbol(&mut self, name: String, is_undef: bool, value: u32, sec_name: &str, is_global: bool) -> Option<()> {
+    /// 在符号表添加一个符号
+    pub fn add_symbol(&mut self, symbol: Symbol) -> Option<()> {
         if let Some(_) = self.symbol_index { // 不可再添加符号, 因为已经固定
             return None;
         }
-        if let Some(_) = self.string_table.get(&name) {
+        if let Some(_) = self.string_table.get(&symbol.name) {
             return None;
         }
-        let index = self.string_table.add(name);
+        let index = self.string_table.add(symbol.name);
         let mut sym = Sym {
             st_name: index as Word,
-            st_value: 0,
+            st_value: symbol.value,
             st_size: 0,
             st_info: 0,
             st_other: 0,
             st_shndx: 0,
         };
-        if is_undef {
-            sym.st_info = st_info!(STB_GLOBAL, STT_NOTYPE);
-            sym.st_shndx = 0; // undef
-            self.symbol_table.1.push(sym);
-        } else {
-            sym.st_shndx = match sec_name {
-                ".text" => Self::TEXT_INDEX,
-                ".data" => Self::DATA_INDEX,
-                ".bss" => Self::BSS_INDEX,
-                _ => return None,
-            };
-            sym.st_value = value;
-            if is_global {
+        match symbol.section {
+            ProgramSection::Undef => {
                 sym.st_info = st_info!(STB_GLOBAL, STT_NOTYPE);
+                sym.st_shndx = 0; // undef
                 self.symbol_table.1.push(sym);
-            } else {
-                sym.st_info = st_info!(STB_LOCAL, STT_NOTYPE);
-                self.symbol_table.0.push(sym)
+            }
+            sec @ _ => {
+                sym.st_shndx = match sec {
+                    ProgramSection::Text => Self::TEXT_INDEX,
+                    ProgramSection::Data => Self::DATA_INDEX,
+                    ProgramSection::Bss => Self::BSS_INDEX,
+                    _ => 0,
+                };
+                sym.st_value = symbol.value;
+                if symbol.is_global {
+                    sym.st_info = st_info!(STB_GLOBAL, STT_NOTYPE);
+                    self.symbol_table.1.push(sym);
+                } else {
+                    sym.st_info = st_info!(STB_LOCAL, STT_NOTYPE);
+                    self.symbol_table.0.push(sym)
+                }
             }
         }
         Some(())
     }
 
     /// 在重定位表添加一个表项(调用时必须保证不再调用 add_symbol), 对于可执行文件, 最终写入文件时会对所有重定位项进行处理
-    pub fn add_relocation(&mut self, offset: u32, section: &str, symbol: &String, is_relative: bool) -> Option<()> {
+    pub fn add_relocation(&mut self, section: ProgramSection, rel: Relocation) -> Option<()> {
         if self.symbol_index.is_none() {
             self.build_symbol_index();
         }
-        let symbol_name = self.string_table.get(&symbol)?;
+        let symbol_name = self.string_table.get(&rel.symbol)?;
         let symbol = self.symbol_index.as_ref().unwrap().get(&symbol_name)?.clone();
-        let r_info: Word = if is_relative {
+        let r_info: Word = if rel.is_relative {
             r_info!(symbol, R_386_PC32)
         } else {
             r_info!(symbol, R_386_32)
         };
         let rel = Rel {
-            r_offset: offset,
+            r_offset: rel.offset,
             r_info,
         };
         match section {
-            ".text" => self.text_rel.push(rel),
-            ".data" => self.data_rel.push(rel),
+            ProgramSection::Text => self.text_rel.push(rel),
+            ProgramSection::Data => self.data_rel.push(rel),
             _ => return None,
         }
         Some(())
@@ -717,33 +720,30 @@ impl StringTable {
 /// 表示一个符号
 pub struct Symbol {
     pub name: String,
-    pub is_undef: bool,
     pub value: u32,
-    pub sec_name: String,
+    pub section: ProgramSection,
     pub is_global: bool,
 }
 
 impl Symbol {
     pub fn new(
         name: String,
-        is_undef: bool,
         value: u32,
-        sec_name: String,
+        section: ProgramSection,
         is_global: bool
     ) -> Self {
         Self {
             name,
-            is_undef,
             value,
-            sec_name,
+            section,
             is_global,
         }
     }
 }
 
+// 表示一条重定位信息
 pub struct Relocation {
     pub offset: u32,
-    pub section: String,
     pub symbol: String,
     pub is_relative: bool
 }
@@ -751,17 +751,26 @@ pub struct Relocation {
 impl Relocation {
     pub fn new(
         offset: u32,
-        section: String,
         symbol: String,
         is_relative: bool
     ) -> Self {
         Self {
             offset,
-            section,
             symbol,
             is_relative,
         }
     }
+}
+
+// 表示 .text, .data 或 .bss
+#[derive(Debug)]
+#[derive(Clone, Copy)]
+#[derive(PartialEq)]
+pub enum ProgramSection {
+    Undef,
+    Text,
+    Data,
+    Bss
 }
 
 fn align(addr: usize, align: usize) -> usize {
@@ -795,7 +804,7 @@ mod tests_obj {
         ];
         let mut obj = Elf::new();
         obj.set_section_content(".text", code).unwrap();
-        obj.add_symbol(String::from("_start"), false, 0, ".text", true).unwrap();
+        obj.add_symbol(Symbol::new(String::from("_start"),  0, ProgramSection::Text, true)).unwrap();
 
         let mut file = File::create("test.o").expect("fail to create a file");
         obj.write_obj(&mut file);
@@ -819,9 +828,9 @@ mod tests_obj {
         let mut obj = Elf::new();
         obj.set_section_content(".text", code).unwrap();
         obj.set_section_content(".data", data).unwrap();
-        obj.add_symbol(String::from("_start"), false, 0, ".text", true).unwrap();
-        obj.add_symbol(String::from("num"), false, 1, ".data", false).unwrap();
-        obj.add_relocation(7, ".text", &String::from("num"), false).unwrap();
+        obj.add_symbol(Symbol::new(String::from("_start"),  0, ProgramSection::Text, true)).unwrap();
+        obj.add_symbol(Symbol::new(String::from("num"),  1, ProgramSection::Data, false)).unwrap();
+        obj.add_relocation(ProgramSection::Text, Relocation::new(7, String::from("num"), false)).unwrap();
 
         let mut file = File::create("test.o").expect("fail to create a file");
         obj.write_obj(&mut file);
@@ -842,9 +851,9 @@ mod tests_obj {
         let mut obj = Elf::new();
         obj.set_section_content(".text", code).unwrap();
         obj.set_bss_size(bss_size);
-        obj.add_symbol(String::from("_start"), false, 0, ".text", true).unwrap();
-        obj.add_symbol(String::from("num"), false, 0, ".bss", false).unwrap();
-        obj.add_relocation(7, ".text", &String::from("num"), false).unwrap();
+        obj.add_symbol(Symbol::new(String::from("_start"), 0, ProgramSection::Text, true)).unwrap();
+        obj.add_symbol(Symbol::new(String::from("num"), 0, ProgramSection::Bss, false)).unwrap();
+        obj.add_relocation(ProgramSection::Text, Relocation::new(7, String::from("num"), false)).unwrap();
 
         let mut file = File::create("test.o").expect("fail to create a file");
         obj.write_obj(&mut file);
@@ -870,9 +879,9 @@ mod tests_obj {
 
         let mut obj = Elf::new();
         obj.set_section_content(".text", code).unwrap();
-        obj.add_symbol(String::from("_start"), false, 0, ".text", true).unwrap();
-        obj.add_symbol(String::from("exit"), false, code_start.len() as u32, ".text", false).unwrap();
-        obj.add_relocation(code_start.len() as u32 - 4, ".text", &String::from("exit"), true).unwrap(); // 添加相对重定位
+        obj.add_symbol(Symbol::new(String::from("_start"), 0, ProgramSection::Text, true)).unwrap();
+        obj.add_symbol(Symbol::new(String::from("exit"), code_start.len() as u32, ProgramSection::Text, false)).unwrap();
+        obj.add_relocation(ProgramSection::Text, Relocation::new(code_start.len() as u32 - 4, String::from("exit"), true)).unwrap(); // 添加相对重定位
 
         let mut file = File::create("test.o").expect("fail to create a file");
         obj.write_obj(&mut file);
@@ -899,7 +908,7 @@ mod tests_exec {
         ];
         let mut exec = Elf::new();
         exec.set_section_content(".text", code).unwrap();
-        exec.add_symbol(String::from("_start"), false, 0, ".text", true).unwrap();
+        exec.add_symbol(Symbol::new(String::from("_start"),  0, ProgramSection::Text, true)).unwrap();
 
         let mut file = File::create("test").expect("fail to create a file");
         let mut perms = file.metadata().unwrap().permissions();
@@ -924,9 +933,9 @@ mod tests_exec {
         let mut exec = Elf::new();
         exec.set_section_content(".text", code).unwrap();
         exec.set_section_content(".data", data).unwrap();
-        exec.add_symbol(String::from("_start"), false, 0, ".text", true).unwrap();
-        exec.add_symbol(String::from("num"), false, 1, ".data", false).unwrap();
-        exec.add_relocation(7, ".text", &String::from("num"), false).unwrap();
+        exec.add_symbol(Symbol::new(String::from("_start"),  0, ProgramSection::Text, true)).unwrap();
+        exec.add_symbol(Symbol::new(String::from("num"),  1, ProgramSection::Data, false)).unwrap();
+        exec.add_relocation(ProgramSection::Text, Relocation::new(7, String::from("num"), false)).unwrap();
 
         let mut file = File::create("test").expect("fail to create a file");
         let mut perms = file.metadata().unwrap().permissions();
@@ -948,9 +957,9 @@ mod tests_exec {
         let mut exec = Elf::new();
         exec.set_section_content(".text", code).unwrap();
         exec.set_bss_size(bss_size);
-        exec.add_symbol(String::from("_start"), false, 0, ".text", true).unwrap();
-        exec.add_symbol(String::from("num"), false, 0, ".bss", false).unwrap();
-        exec.add_relocation(7, ".text", &String::from("num"), false).unwrap();
+        exec.add_symbol(Symbol::new(String::from("_start"), 0, ProgramSection::Text, true)).unwrap();
+        exec.add_symbol(Symbol::new(String::from("num"), 0, ProgramSection::Bss, false)).unwrap();
+        exec.add_relocation(ProgramSection::Text, Relocation::new(7, String::from("num"), false)).unwrap();
 
         let mut file = File::create("test").expect("fail to create a file");
         let mut perms = file.metadata().unwrap().permissions();

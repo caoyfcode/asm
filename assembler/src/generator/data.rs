@@ -1,6 +1,7 @@
-use crate::common::Size;
+use elf::Relocation;
 
-use super::{Value, Statement, RelocationInfo};
+use crate::common::Size;
+use super::{Value, Statement};
 
 pub(super) struct Data {
     size: Size,
@@ -45,9 +46,9 @@ impl Statement for Data {
         self.size.length() * self.datas.len() as u32
     }
 
-    fn emit(&self) -> (Vec<u8>, Vec<RelocationInfo>) {
+    fn emit(&self) -> (Vec<u8>, Vec<Relocation>) {
         let mut data: Vec<u8> = Vec::with_capacity(self.length() as usize);
-        let mut rel: Vec<RelocationInfo> = Vec::new();
+        let mut rel: Vec<Relocation> = Vec::new();
         let value_size = self.size.length();
         for value in &self.datas {
             match value {
@@ -61,7 +62,7 @@ impl Statement for Data {
                     for _ in 0..value_size {
                         data.push(0);
                     }
-                    rel.push(RelocationInfo { offset, name: name.clone(), is_relative: *is_relative });
+                    rel.push(Relocation { offset, symbol: name.clone(), is_relative: *is_relative });
                 }
             }
         }

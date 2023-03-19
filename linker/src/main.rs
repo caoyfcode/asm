@@ -5,7 +5,9 @@ use std::io::{Seek, SeekFrom};
 use std::mem::size_of;
 use std::os::unix::prelude::PermissionsExt;
 
-use elf::*;
+use elf::{Elf, Symbol, Relocation, ProgramSection};
+use elf::elf_h::*;
+use elf::{r_sym, r_type, st_bind, st_type};
 
 fn main() {
     let mut input: Option<String> = None;
@@ -135,19 +137,20 @@ fn parse_obj(input: &mut File) -> Elf {
             assert_eq!(st_type, STT_NOTYPE);
             assert_eq!(sym.st_size, 0);
             let is_undef = sym.st_shndx == 0;
-            let mut sec_name = String::new();
-            if !is_undef {
+            let section = if !is_undef {
                 if text_index == Some(sym.st_shndx as usize) {
-                    sec_name = String::from(".text");
+                    ProgramSection::Text
                 } else if data_index == Some(sym.st_shndx as usize) {
-                    sec_name = String::from(".data");
+                    ProgramSection::Data
                 } else if bss_index == Some(sym.st_shndx as usize) {
-                    sec_name = String::from(".bss");
+                    ProgramSection::Bss
                 }else {
                     panic!("symbol {} in unsupported section", name);
                 }
-            }
-            symbols.push(Symbol::new(String::from(name), is_undef, sym.st_value, sec_name, is_global));
+            } else {
+                ProgramSection::Undef
+            };
+            symbols.push(Symbol::new(String::from(name), sym.st_value, section, is_global));
         }
         // .rel.text
         if let Some(rel_index) = sec_indices.get(".rel.text") {
@@ -167,7 +170,7 @@ fn parse_obj(input: &mut File) -> Elf {
                     R_386_PC32 => true,
                     _ => panic!("unsupported reloaction type"),
                 };
-                rel_text.push(Relocation::new(rel.r_offset, String::from(".text"), symbol, is_relative));
+                rel_text.push(Relocation::new(rel.r_offset, symbol, is_relative));
             }
         }
         // .rel.data
@@ -188,7 +191,7 @@ fn parse_obj(input: &mut File) -> Elf {
                     R_386_PC32 => true,
                     _ => panic!("unsupported reloaction type"),
                 };
-                rel_data.push(Relocation::new(rel.r_offset, String::from(".data"), symbol, is_relative));
+                rel_data.push(Relocation::new(rel.r_offset, symbol, is_relative));
             }
         }
     }
@@ -197,14 +200,14 @@ fn parse_obj(input: &mut File) -> Elf {
     elf.set_section_content(".text", text);
     elf.set_section_content(".data", data);
     elf.set_bss_size(bss_size as u32);
-    for Symbol { name, is_undef, value, sec_name, is_global } in symbols {
-        elf.add_symbol(name, is_undef, value, &sec_name, is_global);
+    for symbol in symbols {
+        elf.add_symbol(symbol);
     }
-    for Relocation { offset, section, symbol, is_relative } in rel_text {
-        elf.add_relocation(offset, &section, &symbol, is_relative);
+    for rel in rel_text {
+        elf.add_relocation(ProgramSection::Text, rel);
     }
-    for Relocation { offset, section, symbol, is_relative } in rel_data {
-        elf.add_relocation(offset, &section, &symbol, is_relative);
+    for rel in rel_data {
+        elf.add_relocation(ProgramSection::Data, rel);
     }
     elf
 }

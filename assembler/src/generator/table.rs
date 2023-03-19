@@ -1,20 +1,8 @@
 use std::collections::{HashMap, HashSet};
 
+use elf::{Symbol, ProgramSection};
+
 use super::Section;
-
-/// 表示一个标签
-pub(super) struct Label {
-    pub(super) name: String,
-    pub(super) offset: u32,
-    pub(super) section: Section,
-    pub(super) is_global: bool,
-}
-
-impl Label {
-    fn new(name: String, offset: u32, section: Section, is_global: bool) -> Self {
-        Self { name, offset, section, is_global }
-    }
-}
 
 #[derive(Clone, Copy)]
 pub(super) enum SymbolKind {
@@ -40,25 +28,39 @@ impl SymbolTable {
         self.symbols.get(name).copied()
     }
 
-    pub(super) fn labels_and_externals(&self) -> (Vec<Label>, Vec<String>) {
-        let mut labels: Vec<Label> = Vec::new(); // name, offset, section, is_global
-        let mut externals: Vec<String> = Vec::new();
+    pub(super) fn symbols(&self) -> Vec<Symbol> {
+        let mut symbols: Vec<Symbol> = Vec::new();
         for (name, kind) in &self.symbols {
             match kind {
-                SymbolKind::External => externals.push(name.clone()),
-                SymbolKind::Label(offset, section) => labels.push(Label::new(name.clone(), *offset, *section, self.globals.contains(name))),
+                SymbolKind::External => symbols.push(Symbol {
+                    name: name.clone(),
+                    value: 0,
+                    section: ProgramSection::Undef,
+                    is_global: true,
+                }),
+                SymbolKind::Label(offset, section) => symbols.push(Symbol {
+                    name: name.clone(),
+                    value: *offset,
+                    section: (*section).into(),
+                    is_global: self.globals.contains(name),
+                }),
                 SymbolKind::Constant(_) => (),
             }
         }
-        labels.sort_by(|a, b| {
-            let ord = a.section.name().cmp(b.section.name());
+        symbols.sort_by(|lhs, rhs| {
+            let ord = (lhs.section as usize).cmp(&(rhs.section as usize));
             if ord.is_eq() {
-                return a.offset.cmp(&b.offset);
+                let ord = lhs.value.cmp(&rhs.value);
+                if ord.is_eq() {
+                    lhs.name.cmp(&rhs.name)
+                } else {
+                    ord
+                }
+            } else {
+                ord
             }
-            ord
         });
-        externals.sort();
-        (labels, externals)
+        symbols
     }
 
     pub(super) fn insert_constant(&mut self, name: String, value: u32) -> bool {

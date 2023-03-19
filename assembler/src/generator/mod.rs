@@ -3,13 +3,13 @@ mod data;
 mod instruction;
 
 use std::fs::File;
-use elf::Elf;
+use elf::{Elf, ProgramSection, Symbol, Relocation};
 
 use crate::ast::{Node, Visitor, ProgramNode, ProgramItem, InstructionNode, LabelNode, PseudoSectionNode, PseudoGlobalNode, PseudoEquNode, PseudoFillNode, PseudoIntegerNode, PseudoStringNode, PseudoCommNode, ValueNode, OperandNode, RegisterNode, MemNode};
 use crate::common::{Size, Error};
 use crate::config::{self, OperandEncoding, RegisterKind, InstructionInfo, RegisterInfo};
 
-use table::{SymbolTable, SymbolKind, Label};
+use table::{SymbolTable, SymbolKind};
 use data::Data;
 use instruction::Instruction;
 
@@ -36,6 +36,16 @@ impl Section {
             Section::Text => ".text",
             Section::Data => ".data",
             Section::Bss => ".bss",
+        }
+    }
+}
+
+impl From<Section> for ProgramSection {
+    fn from(value: Section) -> Self {
+        match value {
+            Section::Text => ProgramSection::Text,
+            Section::Data => ProgramSection::Data,
+            Section::Bss => ProgramSection::Bss,
         }
     }
 }
@@ -67,19 +77,13 @@ impl Segment {
 /// 表示一条指令或数据定义
 trait Statement {
     fn length(&self) -> u32;
-    fn emit(&self) -> (Vec<u8>, Vec<RelocationInfo>);
+    fn emit(&self) -> (Vec<u8>, Vec<Relocation>);
 }
 
 /// 用于在 Statement 中表示数值或标签或外部符号
 enum Value {
     Integer(u32), // 可以确定的数值
     Symbol(String, bool), // 标签或外部符号, (name, is_relative)
-}
-
-struct RelocationInfo {
-    offset: u32, // 重定位地址
-    name: String, // 重定位符号名
-    is_relative: bool, // 是则 R_386_PC32, 否则 R_386_32
 }
 
 /// 用于访问语法树生成目标文件
@@ -115,32 +119,29 @@ impl Generator {
         let (data_sec, data_rel) = self.generate_data_section();
         let (text_sec, text_rel) = self.generate_text_section();
         let bss_size = self.generate_bss_section_size();
-        let (labels, externals) = self.generate_symbol_table();
+        let symbols = self.generate_symbol_table();
 
         let mut obj = Elf::new();
         obj.set_section_content(".text", text_sec)?;
         obj.set_section_content(".data", data_sec)?;
         obj.set_bss_size(bss_size);
-        for Label {name, offset, section, is_global } in labels {
-            obj.add_symbol(name, false, offset, section.name(), is_global)?;
+        for symbol in symbols {
+            obj.add_symbol(symbol)?;
         }
-        for name in externals {
-            obj.add_symbol(name, true, 0, "", true)?;
+        for rel in text_rel {
+            obj.add_relocation(ProgramSection::Text, rel)?;
         }
-        for RelocationInfo { offset, name, is_relative } in text_rel {
-            obj.add_relocation(offset, ".text", &name, is_relative)?;
-        }
-        for RelocationInfo { offset, name, is_relative } in data_rel {
-            obj.add_relocation(offset, ".data", &name, is_relative)?;
+        for rel in data_rel {
+            obj.add_relocation(ProgramSection::Data, rel)?;
         }
         obj.write_obj(out);
 
         Some(())
     }
 
-    fn generate_data_section(&self) -> (Vec<u8>, Vec<RelocationInfo>) {
+    fn generate_data_section(&self) -> (Vec<u8>, Vec<Relocation>) {
         let mut section: Vec<u8> = Vec::new();
-        let mut rel: Vec<RelocationInfo> = Vec::new();
+        let mut rel: Vec<Relocation> = Vec::new();
         for data in &self.data_section {
             let (mut d, mut r) = data.emit();
             let offset = section.len() as u32;
@@ -153,9 +154,9 @@ impl Generator {
         (section, rel)
     }
 
-    fn generate_text_section(&self) -> (Vec<u8>, Vec<RelocationInfo>) {
+    fn generate_text_section(&self) -> (Vec<u8>, Vec<Relocation>) {
         let mut section: Vec<u8> = Vec::new();
-        let mut rel: Vec<RelocationInfo> = Vec::new();
+        let mut rel: Vec<Relocation> = Vec::new();
         for code in &self.text_section {
             let (mut d, mut r) = code.emit();
             let offset = section.len() as u32;
@@ -174,11 +175,11 @@ impl Generator {
     }
 
     // 将对于同 section 标签的相对重定位从重定位表删除, 并修改字节数组对应位置
-    fn handle_relative_relocation(&self, section: Section, content: &mut Vec<u8>, rel: &mut Vec<RelocationInfo>) {
+    fn handle_relative_relocation(&self, section: Section, content: &mut Vec<u8>, rel: &mut Vec<Relocation>) {
         let mut removes: Vec<usize> = Vec::new();
         for idx in 0..rel.len() {
             if rel[idx].is_relative {
-                if let Some(SymbolKind::Label(val, sec)) = self.table.get_symbol(&rel[idx].name) {
+                if let Some(SymbolKind::Label(val, sec)) = self.table.get_symbol(&rel[idx].symbol) {
                     if section == sec {
                         removes.push(idx);
                         let offset = rel[idx].offset as usize;
@@ -200,12 +201,13 @@ impl Generator {
         }
     }
 
-    fn generate_symbol_table(&self) -> (Vec<Label>, Vec<String>) {
-        let (labels, extenals) = self.table.labels_and_externals();
-        let labels: Vec<Label> = labels.into_iter()
-            .filter(|Label {name, .. }| Section::from(&name).is_none())
-            .collect();
-        (labels, extenals)
+    fn generate_symbol_table(&self) -> Vec<Symbol> {
+        // 只留下不是 section 名的符号
+        self.table
+            .symbols()
+            .into_iter()
+            .filter(|symbol| Section::from(&symbol.name).is_none())
+            .collect()
     }
 
     /// 若 name 为 equ, 则返回其值, 否则返回重定位信息, 并尝试在符号表插入一个外部符号
@@ -909,18 +911,19 @@ mod tests {
         let (data_sec, data_rel) = generator.generate_data_section();
         let (text_sec, text_rel) = generator.generate_text_section();
         let bss_size = generator.generate_bss_section_size();
-        let (labels, externals) = generator.generate_symbol_table();
+        let symbols = generator.generate_symbol_table();
 
         println!();
         println!("symbol table is:");
-        println!("labels:");
         println!("offset\tsection\tglobal\tname");
-        for Label {name, offset, section, is_global } in labels {
-            println!("0x{:x}\t{}\t{}\t{}", offset, section.name(), is_global, name);
-        }
-        println!("externals:");
-        for name in externals {
-            println!("{name}");
+        for Symbol { name, value, section, is_global } in symbols {
+            let section = match section {
+                ProgramSection::Undef => "",
+                ProgramSection::Text => ".text",
+                ProgramSection::Data => ".data",
+                ProgramSection::Bss => ".bss",
+            };
+            println!("0x{:x}\t{}\t{}\t{}", value, section, is_global, name);
         }
 
         println!();
@@ -950,14 +953,14 @@ mod tests {
         println!(".data relocation table is:");
         println!("offset\tname\tis_relative");
         for rel in data_rel {
-            println!("0x{:x}\t{}\t{}", rel.offset, rel.name, rel.is_relative);
+            println!("0x{:x}\t{}\t{}", rel.offset, rel.symbol, rel.is_relative);
         }
 
         println!();
         println!(".text relocation table is:");
         println!("offset\tname\tis_relative");
         for rel in text_rel {
-            println!("0x{:x}\t{}\t{}", rel.offset, rel.name, rel.is_relative);
+            println!("0x{:x}\t{}\t{}", rel.offset, rel.symbol, rel.is_relative);
         }
     }
 
