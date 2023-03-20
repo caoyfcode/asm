@@ -63,159 +63,97 @@ use std::{collections::HashMap, fs::File, mem::size_of, io::Write};
 
 use elf_h::*;
 
-
-/// 表示目标文件或可执行文件
-pub struct Elf {
-    text: Vec<u8>, // .text
-    data: Vec<u8>, // .data
-    bss_size: Word, // .bss
-    symbol_table: (Vec<Sym>, Vec<Sym>), // .symtab (locals, globals)
-    string_table: StringTable, // .strtab
-    text_rel: Vec<Rel>, // .rel.text
-    data_rel: Vec<Rel>, // .rel.data
-
-    symbol_index: Option<HashMap<usize, usize>>, // name -> index, name 指的是 string_table 的 index, index 指的是 symbol table 的 idnex
+pub struct ElfWriter {
+    text: Vec<u8>,
+    data: Vec<u8>,
+    bss_size: u32,
+    symbols: Vec<Symbol>,
+    rel_text: Vec<Relocation>,
+    rel_data: Vec<Relocation>,
 }
 
-impl Elf {
+impl ElfWriter {
     // 各个 section 在 section header table 中的下标
-    const TEXT_INDEX: Section = 1;
-    const DATA_INDEX: Section = 2;
-    const BSS_INDEX: Section = 3;
-    const SHSTRTAB_INDEX: Section = 4;
-    const SYMTAB_INDEX: Section = 5;
-    const STRTAB_INDEX: Section = 6;
+    const TEXT_INDEX: u16 = 1;
+    const DATA_INDEX: u16 = 2;
+    const BSS_INDEX: u16 = 3;
+    const SHSTRTAB_INDEX: u16 = 4;
+    const SYMTAB_INDEX: u16 = 5;
+    const STRTAB_INDEX: u16 = 6;
     // 当为可执行文件时, base address
     const BASE_ADDRESS: u32 = 0x8048000;
 
+    /// 根据 .text 与 .data 的大小计算 .text, .data, .bss 的虚拟地址, 用于链接使用
+    pub fn calc_addresses(text_size: u32, data_size: u32) -> (u32, u32, u32) {
+        let header_size = size_of::<Ehdr>() + 3 * size_of::<Phdr>();
+        let text_off = align(header_size, 0x1000);
+        let text_addr = Self::BASE_ADDRESS + text_off as u32;
+        let data_addr = align(text_addr as usize + text_size as usize, 0x1000) as u32;
+        let bss_addr = data_addr + data_size;
+        (text_addr, data_addr, bss_addr)
+    }
+
     pub fn new() -> Self {
-        let mut obj = Self {
+        Self {
             text: Vec::new(),
             data: Vec::new(),
             bss_size: 0,
-            symbol_table: (Vec::new(), Vec::new()),
-            string_table: StringTable::new(),
-            text_rel: Vec::new(),
-            data_rel: Vec::new(),
-            symbol_index: None,
-        };
-        // 符号表先添加一个无效符号
-        let index = obj.string_table.add(String::from(""));
-        obj.symbol_table.0.push(Sym {
-            st_name: index as Word,
-            st_value: 0,
-            st_size: 0,
-            st_info: st_info!(STB_LOCAL, STT_NOTYPE),
-            st_other: 0,
-            st_shndx: 0, // undef
-        });
-        obj
+            symbols: Vec::new(),
+            rel_text: Vec::new(),
+            rel_data: Vec::new(),
+        }
     }
 
-    pub fn set_bss_size(&mut self, size: u32) {
+    pub fn text(&mut self, content: Vec<u8>) -> &mut Self {
+        self.text = content;
+        self
+    }
+
+    pub fn data(&mut self, content: Vec<u8>) -> &mut Self {
+        self.data = content;
+        self
+    }
+
+    pub fn bss_size(&mut self, size: u32) -> &mut Self {
         self.bss_size = size;
+        self
     }
 
-    /// 设置 .text 或 .data 的内容
-    pub fn set_section_content(&mut self, sec_name: &str, content: Vec<u8>) -> Option<()>{
-        match sec_name {
-            ".text" => self.text = content,
-            ".data" => self.data = content,
-            _ => return None,
-        }
-        Some(())
+    pub fn symbols(&mut self, symbols: Vec<Symbol>) -> &mut Self {
+        self.symbols = symbols;
+        self
     }
 
-    /// 在符号表添加一个符号
-    pub fn add_symbol(&mut self, symbol: Symbol) -> Option<()> {
-        if let Some(_) = self.symbol_index { // 不可再添加符号, 因为已经固定
-            return None;
-        }
-        if let Some(_) = self.string_table.get(&symbol.name) {
-            return None;
-        }
-        let index = self.string_table.add(symbol.name);
-        let mut sym = Sym {
-            st_name: index as Word,
-            st_value: symbol.value,
-            st_size: 0,
-            st_info: 0,
-            st_other: 0,
-            st_shndx: 0,
-        };
-        match symbol.section {
-            ProgramSection::Undef => {
-                sym.st_info = st_info!(STB_GLOBAL, STT_NOTYPE);
-                sym.st_shndx = 0; // undef
-                self.symbol_table.1.push(sym);
-            }
-            sec @ _ => {
-                sym.st_shndx = match sec {
-                    ProgramSection::Text => Self::TEXT_INDEX,
-                    ProgramSection::Data => Self::DATA_INDEX,
-                    ProgramSection::Bss => Self::BSS_INDEX,
-                    _ => 0,
-                };
-                sym.st_value = symbol.value;
-                if symbol.is_global {
-                    sym.st_info = st_info!(STB_GLOBAL, STT_NOTYPE);
-                    self.symbol_table.1.push(sym);
-                } else {
-                    sym.st_info = st_info!(STB_LOCAL, STT_NOTYPE);
-                    self.symbol_table.0.push(sym)
-                }
-            }
-        }
-        Some(())
+    pub fn rel_text(&mut self, rel: Vec<Relocation>) -> &mut Self {
+        self.rel_text = rel;
+        self
     }
 
-    /// 在重定位表添加一个表项(调用时必须保证不再调用 add_symbol), 对于可执行文件, 最终写入文件时会对所有重定位项进行处理
-    pub fn add_relocation(&mut self, section: ProgramSection, rel: Relocation) -> Option<()> {
-        if self.symbol_index.is_none() {
-            self.build_symbol_index();
-        }
-        let symbol_name = self.string_table.get(&rel.symbol)?;
-        let symbol = self.symbol_index.as_ref().unwrap().get(&symbol_name)?.clone();
-        let r_info: Word = if rel.is_relative {
-            r_info!(symbol, R_386_PC32)
-        } else {
-            r_info!(symbol, R_386_32)
-        };
-        let rel = Rel {
-            r_offset: rel.offset,
-            r_info,
-        };
-        match section {
-            ProgramSection::Text => self.text_rel.push(rel),
-            ProgramSection::Data => self.data_rel.push(rel),
-            _ => return None,
-        }
-        Some(())
+    pub fn rel_data(&mut self, rel: Vec<Relocation>) -> &mut Self {
+        self.rel_data = rel;
+        self
     }
 
-    /// 构造 symbol name 到 symbol table index 的映射, 之后符号表就固定了
-    /// 1. 在调用此之前, 不可添加重定位符号
-    /// 2. 之后, 不可添加符号表
-    fn build_symbol_index(&mut self) {
-        let mut index: usize = 0;
-        let mut map: HashMap<usize, usize> = HashMap::new();
-        for local in &self.symbol_table.0 {
-            map.insert(local.st_name as usize, index);
-            index += 1;
-        }
-        for global in &self.symbol_table.1 {
-            map.insert(global.st_name as usize, index);
-            index += 1;
-        }
-        self.symbol_index = Some(map);
-    }
-
-    pub fn write_obj(&self, out: &mut File) {
+    pub fn write_obj(&self, out: &mut File) -> Option<()> {
         // .shstrtab
         let shstrtab = StringTable::from(&[
             "", ".bss", ".shstrtab", ".symtab", ".strtab",
             ".rel.text", ".rel.data", // .text 与 .data 也包含其中
         ]);
+        // .symtab, .strtab, last local + 1
+        let (symtab, strtab, symtab_info) = Self::symbol_table(&self.symbols);
+        let mut map: HashMap<String, usize> = HashMap::new();
+        for index in 0..symtab.len() {
+            let str = strtab.get_string(symtab[index].st_name as usize).unwrap(); // 必然成功
+            let dup = map.insert(String::from(str), index);
+            if dup.is_some() {
+                return None; // 符号重复
+            }
+        }
+        // .rel.text
+        let rel_text = Self::rel_section(&self.rel_text, &map)?;
+        // .rel.data
+        let rel_data = Self::rel_section(&self.rel_data, &map)?;
 
         // offsets
         let text_off = size_of::<Ehdr>(); // align = 1
@@ -226,18 +164,16 @@ impl Elf {
         let sh_off = align(shstrtab_end, 4); // align = 4;
         let sh_padding = sh_off - shstrtab_end;
         let symtab_off = sh_off + 9 * size_of::<Shdr>(); // align = 4;
-        let strtab_off = symtab_off +
-            (self.symbol_table.0.len() +
-            self.symbol_table.1.len()) * size_of::<Sym>(); // align = 1
-        let strtab_end = strtab_off + self.string_table.size();
+        let strtab_off = symtab_off + symtab.len() * size_of::<Sym>(); // align = 1
+        let strtab_end = strtab_off + strtab.size();
         let rel_text_off = align(strtab_end, 4); // align = 4
         let rel_text_padding = rel_text_off - strtab_end;
-        let rel_data_off = rel_text_off + self.text_rel.len() * size_of::<Rel>(); // align = 4
+        let rel_data_off = rel_text_off + rel_text.len() * size_of::<Rel>(); // align = 4
 
         // section header table
         let section_header_table: [Shdr; 9] = [
             Shdr { // undef
-                sh_name: shstrtab.get(&String::from("")).unwrap() as Word,
+                sh_name: shstrtab.get_index(&String::from("")).unwrap() as Word,
                 sh_type: SHT_NULL,
                 sh_flags: 0,
                 sh_addr: 0,
@@ -249,7 +185,7 @@ impl Elf {
                 sh_entsize: 0,
             },
             Shdr { // .text
-                sh_name: shstrtab.get(&String::from(".rel.text")).unwrap() as Word + 4,
+                sh_name: shstrtab.get_index(&String::from(".rel.text")).unwrap() as Word + 4,
                 sh_type: SHT_PROGBITS,
                 sh_flags: SHF_ALLOC | SHF_EXECINSTR,
                 sh_addr: 0,
@@ -261,7 +197,7 @@ impl Elf {
                 sh_entsize: 0,
             },
             Shdr { // .data
-                sh_name: shstrtab.get(&String::from(".rel.data")).unwrap() as Word + 4,
+                sh_name: shstrtab.get_index(&String::from(".rel.data")).unwrap() as Word + 4,
                 sh_type: SHT_PROGBITS,
                 sh_flags: SHF_ALLOC | SHF_WRITE,
                 sh_addr: 0,
@@ -273,7 +209,7 @@ impl Elf {
                 sh_entsize: 0,
             },
             Shdr { // .bss
-                sh_name: shstrtab.get(&String::from(".bss")).unwrap() as Word,
+                sh_name: shstrtab.get_index(&String::from(".bss")).unwrap() as Word,
                 sh_type: SHT_NOBITS,
                 sh_flags: SHF_ALLOC | SHF_WRITE,
                 sh_addr: 0,
@@ -285,7 +221,7 @@ impl Elf {
                 sh_entsize: 0,
             },
             Shdr { // .shstrtab
-                sh_name: shstrtab.get(&String::from(".shstrtab")).unwrap() as Word,
+                sh_name: shstrtab.get_index(&String::from(".shstrtab")).unwrap() as Word,
                 sh_type: SHT_STRTAB,
                 sh_flags: 0,
                 sh_addr: 0,
@@ -297,49 +233,48 @@ impl Elf {
                 sh_entsize: 0,
             },
             Shdr { // .symtab
-                sh_name: shstrtab.get(&String::from(".symtab")).unwrap() as Word,
+                sh_name: shstrtab.get_index(&String::from(".symtab")).unwrap() as Word,
                 sh_type: SHT_SYMTAB,
                 sh_flags: 0,
                 sh_addr: 0,
                 sh_offset: symtab_off as Off,
-                sh_size: ((self.symbol_table.0.len() +
-                    self.symbol_table.1.len()) * size_of::<Sym>()) as Word,
+                sh_size: (symtab.len() * size_of::<Sym>()) as Word,
                 sh_link: Self::STRTAB_INDEX as Word, // string table
-                sh_info: self.symbol_table.0.len() as Word, // last local + 1
+                sh_info: symtab_info, // last local + 1
                 sh_addralign: 4,
                 sh_entsize: size_of::<Sym>() as Word,
             },
             Shdr { // .strtab
-                sh_name: shstrtab.get(&String::from(".strtab")).unwrap() as Word,
+                sh_name: shstrtab.get_index(&String::from(".strtab")).unwrap() as Word,
                 sh_type: SHT_STRTAB,
                 sh_flags: 0,
                 sh_addr: 0,
                 sh_offset: strtab_off as Off,
-                sh_size: self.string_table.size() as Word,
+                sh_size: strtab.size() as Word,
                 sh_link: 0,
                 sh_info: 0,
                 sh_addralign: 1,
                 sh_entsize: 0,
             },
             Shdr { // .rel.text
-                sh_name: shstrtab.get(&String::from(".rel.text")).unwrap() as Word,
+                sh_name: shstrtab.get_index(&String::from(".rel.text")).unwrap() as Word,
                 sh_type: SHT_REL,
                 sh_flags: SHF_INFO_LINK,
                 sh_addr: 0,
                 sh_offset: rel_text_off as Off,
-                sh_size: (self.text_rel.len() * size_of::<Rel>()) as Word,
+                sh_size: (rel_text.len() * size_of::<Rel>()) as Word,
                 sh_link: Self::SYMTAB_INDEX as Word, // symbol table
                 sh_info: Self::TEXT_INDEX as Word, // .text
                 sh_addralign: 4,
                 sh_entsize: size_of::<Rel>() as Word,
             },
             Shdr { // .rel.data
-                sh_name: shstrtab.get(&String::from(".rel.data")).unwrap() as Word,
+                sh_name: shstrtab.get_index(&String::from(".rel.data")).unwrap() as Word,
                 sh_type: SHT_REL,
                 sh_flags: SHF_INFO_LINK,
                 sh_addr: 0,
                 sh_offset: rel_data_off as Off,
-                sh_size: (self.data_rel.len() * size_of::<Rel>()) as Word,
+                sh_size: (rel_data.len() * size_of::<Rel>()) as Word,
                 sh_link: Self::SYMTAB_INDEX as Word, // symbol table
                 sh_info: Self::DATA_INDEX as Word, // .data
                 sh_addralign: 4,
@@ -347,7 +282,7 @@ impl Elf {
             },
         ];
 
-        // write to file
+        // elf header
         let header = Ehdr {
             e_ident: [
                 ELFMAG0, ELFMAG1, ELFMAG2, ELFMAG3,
@@ -369,6 +304,8 @@ impl Elf {
             e_shnum: 9,
             e_shstrndx: Self::SHSTRTAB_INDEX,
         };
+
+        // write to file
         // ELF header
         out.write_all(unsafe { serialize(&header) }).unwrap();
         // .text section
@@ -383,25 +320,39 @@ impl Elf {
         // section header table
         out.write_all(unsafe { serialize_slice(&section_header_table) }).unwrap();
         // .symtab
-        out.write_all(unsafe { serialize_slice(&self.symbol_table.0) }).unwrap(); // local
-        out.write_all(unsafe { serialize_slice(&self.symbol_table.1) }).unwrap(); // global
+        out.write_all(unsafe { serialize_slice(&symtab) }).unwrap();
         // .strtab
-        out.write_all(self.string_table.content()).unwrap();
+        out.write_all(strtab.content()).unwrap();
         for _ in 0..rel_text_padding {
             out.write_all(&[0]).unwrap();
         }
         // .rel.text
-        out.write_all(unsafe { serialize_slice(&self.text_rel) }).unwrap();
+        out.write_all(unsafe { serialize_slice(&rel_text) }).unwrap();
         // .rel.data
-        out.write_all(unsafe { serialize_slice(&self.data_rel) }).unwrap();
+        out.write_all(unsafe { serialize_slice(&rel_data) }).unwrap();
+        Some(())
     }
 
-    pub fn write_exec(&mut self, out: &mut File) {
+    pub fn write_exec(&mut self, out: &mut File) -> Option<()> {
         // .shstrtab
         let shstrtab = StringTable::from(&[
             "", ".text", ".data", ".bss",
             ".shstrtab", ".symtab", ".strtab",
         ]);
+        // .symtab, .strtab, last local + 1
+        let (symtab, strtab, symtab_info) = Self::symbol_table(&self.symbols);
+        let mut map: HashMap<String, usize> = HashMap::new();
+        for index in 0..symtab.len() {
+            let str = strtab.get_string(symtab[index].st_name as usize).unwrap(); // 必然成功
+            let dup = map.insert(String::from(str), index);
+            if dup.is_some() {
+                return None; // 符号重复
+            }
+        }
+        // 不支持重定位表
+        if self.rel_text.len() != 0 || self.rel_data.len() != 0 {
+            return None;
+        }
 
         // offsets
         let ph_off = size_of::<Ehdr>();
@@ -420,22 +371,12 @@ impl Elf {
         let sh_off = align(shstrtab_end, 4); // align = 4;
         let sh_padding = sh_off - shstrtab_end;
         let symtab_off = sh_off + 7 * size_of::<Shdr>(); // align = 4;
-        let strtab_off = symtab_off +
-            (self.symbol_table.0.len() +
-            self.symbol_table.1.len()) * size_of::<Sym>(); // align = 1
+        let strtab_off = symtab_off + symtab.len() * size_of::<Sym>(); // align = 1
         // entry
-        let entry = self.string_table.get(&String::from("_start")).expect("can't find \"_start\"");
-        if self.symbol_index.is_none() {
-            self.build_symbol_index();
-        }
-        let entry = self.symbol_index.as_ref().unwrap().get(&entry).unwrap().clone();
-        let entry = if entry < self.symbol_table.0.len() {
-            self.symbol_table.0[entry]
-        } else {
-            self.symbol_table.1[entry - self.symbol_table.0.len()]
-        };
+        let entry = map.get("_start").copied().expect("can't find _start");
+        let entry = symtab[entry];
         if entry.st_shndx != Self::TEXT_INDEX {
-            panic!("\"_start\" is not in .text");
+            panic!("_start is not in .text");
         };
         let entry = text_addr + entry.st_value;
 
@@ -476,7 +417,7 @@ impl Elf {
         // section header table
         let section_header_table: [Shdr; 7] = [
             Shdr { // undef
-                sh_name: shstrtab.get(&String::from("")).unwrap() as Word,
+                sh_name: shstrtab.get_index(&String::from("")).unwrap() as Word,
                 sh_type: SHT_NULL,
                 sh_flags: 0,
                 sh_addr: 0,
@@ -488,7 +429,7 @@ impl Elf {
                 sh_entsize: 0,
             },
             Shdr { // .text
-                sh_name: shstrtab.get(&String::from(".text")).unwrap() as Word,
+                sh_name: shstrtab.get_index(&String::from(".text")).unwrap() as Word,
                 sh_type: SHT_PROGBITS,
                 sh_flags: SHF_ALLOC | SHF_EXECINSTR,
                 sh_addr: text_addr,
@@ -500,7 +441,7 @@ impl Elf {
                 sh_entsize: 0,
             },
             Shdr { // .data
-                sh_name: shstrtab.get(&String::from(".data")).unwrap() as Word,
+                sh_name: shstrtab.get_index(&String::from(".data")).unwrap() as Word,
                 sh_type: SHT_PROGBITS,
                 sh_flags: SHF_ALLOC | SHF_WRITE,
                 sh_addr: data_addr,
@@ -512,7 +453,7 @@ impl Elf {
                 sh_entsize: 0,
             },
             Shdr { // .bss
-                sh_name: shstrtab.get(&String::from(".bss")).unwrap() as Word,
+                sh_name: shstrtab.get_index(&String::from(".bss")).unwrap() as Word,
                 sh_type: SHT_NOBITS,
                 sh_flags: SHF_ALLOC | SHF_WRITE,
                 sh_addr: bss_addr,
@@ -524,7 +465,7 @@ impl Elf {
                 sh_entsize: 0,
             },
             Shdr { // .shstrtab
-                sh_name: shstrtab.get(&String::from(".shstrtab")).unwrap() as Word,
+                sh_name: shstrtab.get_index(&String::from(".shstrtab")).unwrap() as Word,
                 sh_type: SHT_STRTAB,
                 sh_flags: 0,
                 sh_addr: 0,
@@ -536,34 +477,32 @@ impl Elf {
                 sh_entsize: 0,
             },
             Shdr { // .symtab
-                sh_name: shstrtab.get(&String::from(".symtab")).unwrap() as Word,
+                sh_name: shstrtab.get_index(&String::from(".symtab")).unwrap() as Word,
                 sh_type: SHT_SYMTAB,
                 sh_flags: 0,
                 sh_addr: 0,
                 sh_offset: symtab_off as Off,
-                sh_size: ((self.symbol_table.0.len() +
-                    self.symbol_table.1.len()) * size_of::<Sym>()) as Word,
+                sh_size: (symtab.len() * size_of::<Sym>()) as Word,
                 sh_link: Self::STRTAB_INDEX as Word, // string table
-                sh_info: self.symbol_table.0.len() as Word, // last local + 1
+                sh_info: symtab_info, // last local + 1
                 sh_addralign: 4,
                 sh_entsize: size_of::<Sym>() as Word,
             },
             Shdr { // .strtab
-                sh_name: shstrtab.get(&String::from(".strtab")).unwrap() as Word,
+                sh_name: shstrtab.get_index(&String::from(".strtab")).unwrap() as Word,
                 sh_type: SHT_STRTAB,
                 sh_flags: 0,
                 sh_addr: 0,
                 sh_offset: strtab_off as Off,
-                sh_size: self.string_table.size() as Word,
+                sh_size: strtab.size() as Word,
                 sh_link: 0,
                 sh_info: 0,
                 sh_addralign: 1,
                 sh_entsize: 0,
             },
         ];
-        self.handle_relocations(".text", text_addr, data_addr, bss_addr).unwrap();
-        self.handle_relocations(".data", text_addr, data_addr, bss_addr).unwrap();
-        // write to file
+
+        // elf header
         let header = Ehdr {
             e_ident: [
                 ELFMAG0, ELFMAG1, ELFMAG2, ELFMAG3,
@@ -585,6 +524,8 @@ impl Elf {
             e_shnum: 7,
             e_shstrndx: Self::SHSTRTAB_INDEX,
         };
+
+        // write to file
         // ELF header
         out.write_all(unsafe { serialize(&header) }).unwrap();
         // program header table
@@ -595,7 +536,7 @@ impl Elf {
         // .text
         out.write_all(&self.text).unwrap();
         for _ in 0..data_padding {
-            out.write_all(&[0x90]).unwrap();
+            out.write_all(&[0]).unwrap();
         }
         // .data
         out.write_all(&self.data).unwrap();
@@ -607,68 +548,86 @@ impl Elf {
         // section header table
         out.write_all(unsafe { serialize_slice(&section_header_table) }).unwrap();
         // .symtab
-        out.write_all(unsafe { serialize_slice(&self.symbol_table.0) }).unwrap(); // local
-        out.write_all(unsafe { serialize_slice(&self.symbol_table.1) }).unwrap(); // global
+        out.write_all(unsafe { serialize_slice(&symtab) }).unwrap();
         // .strtab
-        out.write_all(self.string_table.content()).unwrap();
-    }
-
-    /// 处理重定位
-    fn handle_relocations(&mut self, section: &str, text_addr: u32, data_addr: u32, bss_addr: u32) -> Option<()> {
-        let (sec, sec_rels, sec_addr) = match section {
-            ".text" => (&mut self.text, &self.text_rel, text_addr),
-            ".data" => (&mut self.data, &self.data_rel, data_addr),
-            _ => return None,
-        };
-        for rel in sec_rels {
-            // 符号的信息
-            let symbol = r_sym!(rel.r_info) as usize;
-            let symbol = if symbol < self.symbol_table.0.len() {
-                self.symbol_table.0[symbol as usize]
-            } else {
-                self.symbol_table.1[symbol as usize - self.symbol_table.0.len()]
-            };
-            let symbol_addr = match symbol.st_shndx {
-                Self::TEXT_INDEX => text_addr + symbol.st_value,
-                Self::DATA_INDEX => data_addr + symbol.st_value,
-                Self::BSS_INDEX => bss_addr + symbol.st_value,
-                _ => panic!("can't be here"),
-            };
-            if symbol.st_size != 0 {
-                return None;
-            }
-            // 重定位的位置
-            let rel_addr = sec_addr + rel.r_offset;
-            let index = rel.r_offset as usize;
-            if index >= sec.len() || index + 3 >= sec.len() {
-                return None;
-            }
-            // 重定位类型
-            let is_relative = match r_type!(rel.r_info) as u8 {
-                R_386_32 => false,
-                R_386_PC32 => true,
-                _ => return None, // unsupported reloaction type
-            };
-            // 计算重定位的值
-            let value: u32 = if is_relative {
-                let addend: u32 = sec[index] as u32
-                    + ((sec[index + 1] as u32) << 8)
-                    + ((sec[index + 2] as u32) << 16)
-                    + ((sec[index + 3] as u32) << 24);
-                symbol_addr
-                    .wrapping_add(addend)
-                    .wrapping_sub(rel_addr)
-            } else {
-                symbol_addr
-            };
-            // 进行重定位
-            sec[index] = value as u8;
-            sec[index + 1] = (value >> 8) as u8;
-            sec[index + 2] = (value >> 16) as u8;
-            sec[index + 3] = (value >> 24) as u8;
-        }
+        out.write_all(strtab.content()).unwrap();
         Some(())
     }
+
+    // 返回符号表, 字符串表, 以及最后一个 local 的 index + 1
+    fn symbol_table(symbols: &Vec<Symbol>) -> (Vec<Sym>, StringTable, u32) {
+        let mut string_table = StringTable::new();
+        let mut local_symbols: Vec<Sym> = Vec::new();
+        let mut global_symbols: Vec<Sym> = Vec::new();
+        // 符号表先添加一个无效符号
+        let index = string_table.add(String::from(""));
+        local_symbols.push(Sym {
+            st_name: index as Word,
+            st_value: 0,
+            st_size: 0,
+            st_info: st_info!(STB_LOCAL, STT_NOTYPE),
+            st_other: 0,
+            st_shndx: 0, // undef
+        });
+
+        for symbol in symbols {
+            let index = string_table.add(symbol.name.clone());
+            let mut sym = Sym {
+                st_name: index as Word,
+                st_value: symbol.value,
+                st_size: 0,
+                st_info: 0,
+                st_other: 0,
+                st_shndx: 0,
+            };
+            match symbol.section {
+                ProgramSection::Undef => {
+                    sym.st_info = st_info!(STB_GLOBAL, STT_NOTYPE);
+                    sym.st_shndx = 0; // undef
+                    global_symbols.push(sym);
+                }
+                sec @ _ => {
+                    sym.st_shndx = match sec {
+                        ProgramSection::Text => Self::TEXT_INDEX,
+                        ProgramSection::Data => Self::DATA_INDEX,
+                        ProgramSection::Bss => Self::BSS_INDEX,
+                        _ => 0,
+                    };
+                    sym.st_value = symbol.value;
+                    if symbol.is_global {
+                        sym.st_info = st_info!(STB_GLOBAL, STT_NOTYPE);
+                        global_symbols.push(sym);
+                    } else {
+                        sym.st_info = st_info!(STB_LOCAL, STT_NOTYPE);
+                        local_symbols.push(sym)
+                    }
+                }
+            }
+        }
+
+        let local_len = local_symbols.len();
+        local_symbols.append(&mut global_symbols);
+        (local_symbols, string_table, local_len as u32)
+    }
+
+    fn rel_section(rels: &Vec<Relocation>, map: &HashMap<String, usize>) -> Option<Vec<Rel>> {
+        let mut ret: Vec<Rel> = Vec::with_capacity(rels.len());
+        for rel in rels {
+            let symbol = map.get(&rel.symbol).copied()?;
+            let r_info: Word = if rel.is_relative {
+                r_info!(symbol, R_386_PC32)
+            } else {
+                r_info!(symbol, R_386_32)
+            };
+            let rel = Rel {
+                r_offset: rel.offset,
+                r_info,
+            };
+            ret.push(rel);
+        }
+        Some(ret)
+    }
+
 }
 
 struct StringTable {
@@ -704,8 +663,19 @@ impl StringTable {
     }
 
     /// index of a String
-    fn get(&self, str: &String) -> Option<usize> {
+    fn get_index(&self, str: &String) -> Option<usize> {
         self.index_map.get(str).copied()
+    }
+
+    fn get_string(&self, index: usize) -> Option<&str> {
+        let mut end = index;
+        for ch in &self.content[index..] {
+            if *ch == 0 {
+                return std::str::from_utf8(&self.content[index..end]).ok();
+            }
+            end += 1;
+        }
+        None
     }
 
     fn content(&self) -> &[u8] {
@@ -718,6 +688,7 @@ impl StringTable {
 }
 
 /// 表示一个符号
+#[derive(Clone)]
 pub struct Symbol {
     pub name: String,
     pub value: u32,
@@ -742,6 +713,7 @@ impl Symbol {
 }
 
 // 表示一条重定位信息
+#[derive(Clone)]
 pub struct Relocation {
     pub offset: u32,
     pub symbol: String,
@@ -802,12 +774,15 @@ mod tests_obj {
             0xbb, 0x02, 0x00, 0x00, 0x00, // mov $2, %ebx ; 参数 1: 2
             0xcd, 0x80 // int $0x80
         ];
-        let mut obj = Elf::new();
-        obj.set_section_content(".text", code).unwrap();
-        obj.add_symbol(Symbol::new(String::from("_start"),  0, ProgramSection::Text, true)).unwrap();
+
+        let mut obj = ElfWriter::new();
+        obj.text(code)
+            .symbols(vec![
+                Symbol::new(String::from("_start"),  0, ProgramSection::Text, true)
+            ]);
 
         let mut file = File::create("test.o").expect("fail to create a file");
-        obj.write_obj(&mut file);
+        obj.write_obj(&mut file).unwrap();
         // $ ld -melf_i386 -o test test.o
         // $ ./test
         // $ echo $?
@@ -825,15 +800,20 @@ mod tests_obj {
             0x8b, 0x1d, 0x00, 0x00, 0x00, 0x00, // mov 0, %ebx ; 参数 1: 0, 之后使用重定位改变
             0xcd, 0x80 // int $0x80
         ];
-        let mut obj = Elf::new();
-        obj.set_section_content(".text", code).unwrap();
-        obj.set_section_content(".data", data).unwrap();
-        obj.add_symbol(Symbol::new(String::from("_start"),  0, ProgramSection::Text, true)).unwrap();
-        obj.add_symbol(Symbol::new(String::from("num"),  1, ProgramSection::Data, false)).unwrap();
-        obj.add_relocation(ProgramSection::Text, Relocation::new(7, String::from("num"), false)).unwrap();
+
+        let mut obj = ElfWriter::new();
+        obj.text(code)
+            .data(data)
+            .symbols(vec![
+                Symbol::new(String::from("_start"),  0, ProgramSection::Text, true),
+                Symbol::new(String::from("num"),  1, ProgramSection::Data, false),
+            ])
+            .rel_text(vec![
+                Relocation::new(7, String::from("num"), false)
+            ]);
 
         let mut file = File::create("test.o").expect("fail to create a file");
-        obj.write_obj(&mut file);
+        obj.write_obj(&mut file).unwrap();
         // $ ld -melf_i386 -o test test.o
         // $ ./test
         // $ echo $?
@@ -848,15 +828,20 @@ mod tests_obj {
             0x8b, 0x1d, 0x00, 0x00, 0x00, 0x00, // mov 0, %ebx ; 参数 1: 0, 之后使用重定位改变
             0xcd, 0x80 // int $0x80
         ];
-        let mut obj = Elf::new();
-        obj.set_section_content(".text", code).unwrap();
-        obj.set_bss_size(bss_size);
-        obj.add_symbol(Symbol::new(String::from("_start"), 0, ProgramSection::Text, true)).unwrap();
-        obj.add_symbol(Symbol::new(String::from("num"), 0, ProgramSection::Bss, false)).unwrap();
-        obj.add_relocation(ProgramSection::Text, Relocation::new(7, String::from("num"), false)).unwrap();
+
+        let mut obj = ElfWriter::new();
+        obj.text(code)
+            .bss_size(bss_size)
+            .symbols(vec![
+                Symbol::new(String::from("_start"), 0, ProgramSection::Text, true),
+                Symbol::new(String::from("num"), 0, ProgramSection::Bss, false),
+            ])
+            .rel_text(vec![
+                Relocation::new(7, String::from("num"), false)
+            ]);
 
         let mut file = File::create("test.o").expect("fail to create a file");
-        obj.write_obj(&mut file);
+        obj.write_obj(&mut file).unwrap();
         // $ ld -melf_i386 -o test test.o
         // $ ./test
         // $ echo $?
@@ -877,14 +862,18 @@ mod tests_obj {
         let mut code: Vec<u8> = code_start.clone();
         code.extend(code_exit.iter());
 
-        let mut obj = Elf::new();
-        obj.set_section_content(".text", code).unwrap();
-        obj.add_symbol(Symbol::new(String::from("_start"), 0, ProgramSection::Text, true)).unwrap();
-        obj.add_symbol(Symbol::new(String::from("exit"), code_start.len() as u32, ProgramSection::Text, false)).unwrap();
-        obj.add_relocation(ProgramSection::Text, Relocation::new(code_start.len() as u32 - 4, String::from("exit"), true)).unwrap(); // 添加相对重定位
+        let mut obj = ElfWriter::new();
+        obj.text(code)
+            .symbols(vec![
+                Symbol::new(String::from("_start"), 0, ProgramSection::Text, true),
+                Symbol::new(String::from("exit"), code_start.len() as u32, ProgramSection::Text, false),
+            ])
+            .rel_text(vec![
+                Relocation::new(code_start.len() as u32 - 4, String::from("exit"), true)
+            ]);
 
         let mut file = File::create("test.o").expect("fail to create a file");
-        obj.write_obj(&mut file);
+        obj.write_obj(&mut file).unwrap();
 
         // $ ld -melf_i386 -o test test.o
         // $ ./test
@@ -906,67 +895,19 @@ mod tests_exec {
             0xbb, 0x02, 0x00, 0x00, 0x00, // mov $2, %ebx ; 参数 1: 2
             0xcd, 0x80 // int $0x80
         ];
-        let mut exec = Elf::new();
-        exec.set_section_content(".text", code).unwrap();
-        exec.add_symbol(Symbol::new(String::from("_start"),  0, ProgramSection::Text, true)).unwrap();
+
+        let mut exec = ElfWriter::new();
+        exec.text(code)
+            .symbols(vec![
+                Symbol::new(String::from("_start"),  0, ProgramSection::Text, true)
+            ]);
 
         let mut file = File::create("test").expect("fail to create a file");
         let mut perms = file.metadata().unwrap().permissions();
         perms.set_mode(0o755); // rwx r-x r-x
         file.set_permissions(perms).unwrap();
-        exec.write_exec(&mut file);
+        exec.write_exec(&mut file).unwrap();
         // $ ./test; echo $?
         // 2
-    }
-
-    #[test]
-    fn test_absolute_reloaction_data_label() {
-        let data: Vec<u8> = vec![
-            0x02,  // .byte 2
-            0x05, 0x00, 0x00, 0x00, // num: .int 5
-        ];
-        let code: Vec<u8> = vec![
-            0xb8, 0x01, 0x00, 0x00, 0x00, // mov $1, %eax ; 调用号 1: exit
-            0x8b, 0x1d, 0x00, 0x00, 0x00, 0x00, // mov 0, %ebx ; 参数 1: 0, 之后使用重定位改变
-            0xcd, 0x80 // int $0x80
-        ];
-        let mut exec = Elf::new();
-        exec.set_section_content(".text", code).unwrap();
-        exec.set_section_content(".data", data).unwrap();
-        exec.add_symbol(Symbol::new(String::from("_start"),  0, ProgramSection::Text, true)).unwrap();
-        exec.add_symbol(Symbol::new(String::from("num"),  1, ProgramSection::Data, false)).unwrap();
-        exec.add_relocation(ProgramSection::Text, Relocation::new(7, String::from("num"), false)).unwrap();
-
-        let mut file = File::create("test").expect("fail to create a file");
-        let mut perms = file.metadata().unwrap().permissions();
-        perms.set_mode(0o755); // rwx r-x r-x
-        file.set_permissions(perms).unwrap();
-        exec.write_exec(&mut file);
-        // $ ./test; echo $?
-        // 5
-    }
-
-    #[test]
-    fn test_absolute_reloaction_bss_label() {
-        let bss_size: u32 = 4;
-        let code: Vec<u8> = vec![
-            0xb8, 0x01, 0x00, 0x00, 0x00, // mov $1, %eax ; 调用号 1: exit
-            0x8b, 0x1d, 0x00, 0x00, 0x00, 0x00, // mov 0, %ebx ; 参数 1: 0, 之后使用重定位改变
-            0xcd, 0x80 // int $0x80
-        ];
-        let mut exec = Elf::new();
-        exec.set_section_content(".text", code).unwrap();
-        exec.set_bss_size(bss_size);
-        exec.add_symbol(Symbol::new(String::from("_start"), 0, ProgramSection::Text, true)).unwrap();
-        exec.add_symbol(Symbol::new(String::from("num"), 0, ProgramSection::Bss, false)).unwrap();
-        exec.add_relocation(ProgramSection::Text, Relocation::new(7, String::from("num"), false)).unwrap();
-
-        let mut file = File::create("test").expect("fail to create a file");
-        let mut perms = file.metadata().unwrap().permissions();
-        perms.set_mode(0o755); // rwx r-x r-x
-        file.set_permissions(perms).unwrap();
-        exec.write_exec(&mut file);
-        // $ ./test; echo $?
-        // 0
     }
 }

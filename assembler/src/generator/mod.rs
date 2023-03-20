@@ -3,7 +3,7 @@ mod data;
 mod instruction;
 
 use std::fs::File;
-use elf::{Elf, ProgramSection, Symbol, Relocation};
+use elf::{ElfWriter, ProgramSection, Symbol, Relocation};
 
 use crate::ast::{Node, Visitor, ProgramNode, ProgramItem, InstructionNode, LabelNode, PseudoSectionNode, PseudoGlobalNode, PseudoEquNode, PseudoFillNode, PseudoIntegerNode, PseudoStringNode, PseudoCommNode, ValueNode, OperandNode, RegisterNode, MemNode};
 use crate::common::{Size, Error};
@@ -121,22 +121,14 @@ impl Generator {
         let bss_size = self.generate_bss_section_size();
         let symbols = self.generate_symbol_table();
 
-        let mut obj = Elf::new();
-        obj.set_section_content(".text", text_sec)?;
-        obj.set_section_content(".data", data_sec)?;
-        obj.set_bss_size(bss_size);
-        for symbol in symbols {
-            obj.add_symbol(symbol)?;
-        }
-        for rel in text_rel {
-            obj.add_relocation(ProgramSection::Text, rel)?;
-        }
-        for rel in data_rel {
-            obj.add_relocation(ProgramSection::Data, rel)?;
-        }
-        obj.write_obj(out);
-
-        Some(())
+        ElfWriter::new()
+            .text(text_sec)
+            .data(data_sec)
+            .bss_size(bss_size)
+            .symbols(symbols)
+            .rel_text(text_rel)
+            .rel_data(data_rel)
+            .write_obj(out)
     }
 
     fn generate_data_section(&self) -> (Vec<u8>, Vec<Relocation>) {
