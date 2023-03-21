@@ -101,7 +101,7 @@ impl Obj {
             let text_index = sec_indices.get(".text").copied();
             let data_index = sec_indices.get(".data").copied();
             let bss_index = sec_indices.get(".bss").copied();
-            for sym in symtab_raw {
+            for sym in &symtab_raw[1..] { // 0 为 undef, 忽略
                 let name = str_in_table(&strtab, sym.st_name as usize).expect("can't find symbol name");
                 let bind = st_bind!(sym.st_info);
                 let st_type = st_type!(sym.st_info);
@@ -144,7 +144,8 @@ impl Obj {
                 for rel in raw {
                     let symbol = r_sym!(rel.r_info);
                     let r_type = r_type!(rel.r_info);
-                    let symbol = symbols[symbol as usize].name.clone();
+                    assert_ne!(symbol, 0);
+                    let symbol = symbols[symbol as usize - 1].name.clone(); // 减 1 是因为没有放 0
                     let is_relative = match r_type as u8 {
                         R_386_32 => false,
                         R_386_PC32 => true,
@@ -165,7 +166,8 @@ impl Obj {
                 for rel in raw {
                     let symbol = r_sym!(rel.r_info);
                     let r_type = r_type!(rel.r_info);
-                    let symbol = symbols[symbol as usize].name.clone();
+                    assert_ne!(symbol, 0);
+                    let symbol = symbols[symbol as usize - 1].name.clone(); // 减 1 是因为没有放 0
                     let is_relative = match r_type as u8 {
                         R_386_32 => false,
                         R_386_PC32 => true,
@@ -188,20 +190,75 @@ impl Obj {
         )
     }
 
-    pub fn link_self(&mut self) -> Option<()> {
-        let (text_addr, data_addr, bss_addr) = ElfWriter::calc_addresses(self.text.len() as u32, self.data.len() as u32);
-        self.handle_relocations(".text", text_addr, data_addr, bss_addr)?;
-        self.handle_relocations(".data", text_addr, data_addr, bss_addr)?;
-        Some(())
+    /// 链接多个目标文件
+    pub fn link(mut objs: Vec<Self>) -> Option<Self> {
+        // 每个 obj 的 .text, .data, .bss 起始地址在最终 obj 中对应 section 的偏移
+        let mut offsets: Vec<(u32, u32, u32)> = Vec::with_capacity(objs.len());
+        let mut size = (0u32, 0u32, 0u32); // .text, .data, .bss 大小
+        for obj in &objs {
+            offsets.push(size);
+            size.0 += obj.text.len() as u32;
+            size.1 += obj.data.len() as u32;
+            size.2 += obj.bss_size as u32;
+        }
+        let mut ret = Self {
+            text: Vec::with_capacity(size.0 as usize),
+            data: Vec::with_capacity(size.1 as usize),
+            bss_size: size.2 as usize,
+            symbols: Vec::new(),
+            rel_text: Vec::new(),
+            rel_data: Vec::new(),
+            symbol_map: HashMap::new(),
+        };
+        let (text_base, data_base, bss_base) = ElfWriter::calc_addresses(size.0, size.1);
+        for index in 0..objs.len() {
+            let (text_off, data_off, bss_off) = offsets[index];
+            let (text_addr, data_addr, bss_addr) = (text_base + text_off, data_base + data_off, bss_base + bss_off);
+            objs[index].handle_relocations(".text", text_addr, data_addr, bss_addr)?;
+            objs[index].handle_relocations(".data", text_addr, data_addr, bss_addr)?;
+            ret.text.extend(objs[index].text.iter());
+            ret.data.extend(objs[index].data.iter());
+            for symbol in &objs[index].symbols {
+                if symbol.is_global && symbol.section != ProgramSection::Undef {
+                    let mut symbol = symbol.clone();
+                    symbol.value += match symbol.section {
+                        ProgramSection::Text => text_off,
+                        ProgramSection::Data => data_off,
+                        ProgramSection::Bss => bss_off,
+                        ProgramSection::Undef => 0, // can't be here
+                    };
+                    let index = ret.symbol_map.insert(symbol.name.clone(), ret.symbols.len());
+                    if index.is_some() { // 存在重复符号
+                        return None;
+                    }
+                    ret.symbols.push(symbol);
+                }
+            }
+            for rel in &objs[index].rel_text {
+                let mut rel = rel.clone();
+                rel.offset += text_off;
+                ret.rel_text.push(rel);
+            }
+            for rel in &objs[index].rel_data {
+                let mut rel = rel.clone();
+                rel.offset += data_off;
+                ret.rel_data.push(rel);
+            }
+        }
+        ret.handle_relocations(".text", text_base, data_base, bss_base)?;
+        ret.handle_relocations(".data", text_base, data_base, bss_base)?;
+        Some(ret)
     }
 
+    /// 处理所有非外部符号的重定位, 并在重定位表项中删除对应项
     fn handle_relocations(&mut self, section: &str, text_addr: u32, data_addr: u32, bss_addr: u32) -> Option<()>  {
         let (sec, sec_rels, sec_addr) = match section {
-            ".text" => (&mut self.text, &self.rel_text, text_addr),
-            ".data" => (&mut self.data, &self.rel_data, data_addr),
+            ".text" => (&mut self.text, &mut self.rel_text, text_addr),
+            ".data" => (&mut self.data, &mut self.rel_data, data_addr),
             _ => return None,
         };
-        for rel in sec_rels {
+        let mut extern_rels: Vec<Relocation> = Vec::new();
+        for rel in sec_rels.iter() {
             // 符号的信息
             let index = self.symbol_map.get(&rel.symbol)?; // 符号不存在返回 None
             let symbol = &self.symbols[*index];
@@ -209,7 +266,10 @@ impl Obj {
                 ProgramSection::Text => text_addr + symbol.value,
                 ProgramSection::Data => data_addr + symbol.value,
                 ProgramSection::Bss => bss_addr + symbol.value,
-                ProgramSection::Undef => return None, // 不可链接外部符号
+                ProgramSection::Undef => { // 外部符号
+                    extern_rels.push(rel.clone());
+                    continue;
+                },
             };
 
             // 重定位的位置
@@ -237,6 +297,7 @@ impl Obj {
             sec[index + 2] = (value >> 16) as u8;
             sec[index + 3] = (value >> 24) as u8;
         }
+        *sec_rels = extern_rels;
         Some(())
     }
 }
