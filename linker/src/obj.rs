@@ -8,6 +8,18 @@ use elf::{Symbol, Relocation, ProgramSection, ElfWriter};
 use elf::elf_h::*;
 use elf::{r_sym, r_type, st_bind, st_type};
 
+// 检查是否相对, 不相等就 return Err(String)
+macro_rules! check_eq {
+    ($left:expr, $right:expr, $msg:expr) => {
+        match (&$left, &$right) {
+            (left_val, right_val) => {
+                if !(*left_val == *right_val) {
+                    return Err(String::from($msg));
+                }
+            }
+        }
+    };
+}
 
 /// 表示从目标文件中读取的信息
 pub struct Obj {
@@ -22,17 +34,17 @@ pub struct Obj {
 }
 
 impl Obj {
-    pub fn parse(input: &mut File) -> Option<Self> {
+    pub fn parse(input: &mut File) -> Result<Self, String> {
         // header
         let header = read_bytes(input, 0, size_of::<Ehdr>());
         let header: &Ehdr = unsafe { deserialize(&header).unwrap() };
-        assert_header(header);
+        check_header(header)?;
         // section header table
         let shtab = read_bytes(input, header.e_shoff as u64, size_of::<Shdr>() * header.e_shnum as usize);
         let shtab: &[Shdr] = unsafe { deserialize_slice(&shtab).unwrap() };
         // .shstrtab
         let shstrtab_sh = shtab[header.e_shstrndx as usize];
-        assert_eq!(shstrtab_sh.sh_type, SHT_STRTAB);
+        check_eq!(shstrtab_sh.sh_type, SHT_STRTAB, "Section Header String Table is not SHT_STRTAB type");
         let shstrtab = read_bytes(input, shstrtab_sh.sh_offset as u64, shstrtab_sh.sh_size as usize);
         // other sections
         let mut sec_indices: HashMap<String, usize> = HashMap::new();
@@ -42,15 +54,14 @@ impl Obj {
                 index += 1;
                 continue;
             }
-            match str_in_table(&shstrtab, sh.sh_name as usize).expect("can't convert bytes to utf-8 str") {
-                name @ (
+            match str_in_table(&shstrtab, sh.sh_name as usize) {
+                Some(name @ (
                     ".text" | ".data" | ".bss"
                     | ".symtab" | ".strtab" | ".rel.text" | ".rel.data"
-                ) => {
-                    if sec_indices.get(name).is_some() {
-                        panic!("duplicate {} section", name);
+                )) => {
+                    if sec_indices.insert(String::from(name), index).is_some() {
+                        return Err(format!("duplicate section {}", name));
                     }
-                    sec_indices.insert(String::from(name), index);
                 }
                 _ => (),
             }
@@ -59,24 +70,24 @@ impl Obj {
 
         let text: Vec<u8> = if let Some(index) = sec_indices.get(".text") {
             let sh = shtab[*index];
-            assert_eq!(sh.sh_type, SHT_PROGBITS);
-            assert_eq!(sh.sh_flags, SHF_ALLOC | SHF_EXECINSTR);
+            check_eq!(sh.sh_type, SHT_PROGBITS, ".text is not SHT_PROGBITS type");
+            check_eq!(sh.sh_flags, SHF_ALLOC | SHF_EXECINSTR, ".text flag is not SHF_ALLOC | SHF_EXECINSTR");
             read_bytes(input, sh.sh_offset as u64, sh.sh_size as usize)
         } else {
             Vec::new()
         };
         let data: Vec<u8> = if let Some(index) = sec_indices.get(".data") {
             let sh = shtab[*index];
-            assert_eq!(sh.sh_type, SHT_PROGBITS);
-            assert_eq!(sh.sh_flags, SHF_ALLOC | SHF_WRITE);
+            check_eq!(sh.sh_type, SHT_PROGBITS, ".data is not SHT_PROGBITS type");
+            check_eq!(sh.sh_flags, SHF_ALLOC | SHF_WRITE, ".data flag is not SHF_ALLOC | SHF_WRITE");
             read_bytes(input, sh.sh_offset as u64, sh.sh_size as usize)
         } else {
             Vec::new()
         };
         let bss_size: usize = if let Some(index) = sec_indices.get(".bss") {
             let sh = shtab[*index];
-            assert_eq!(sh.sh_type, SHT_NOBITS);
-            assert_eq!(sh.sh_flags, SHF_ALLOC | SHF_WRITE);
+            check_eq!(sh.sh_type, SHT_NOBITS, ".data is not SHT_PROGBITS type");
+            check_eq!(sh.sh_flags, SHF_ALLOC | SHF_WRITE, ".bss flag is not SHF_ALLOC | SHF_WRITE");
             sh.sh_size as usize
         } else {
             0
@@ -87,31 +98,41 @@ impl Obj {
         let mut rel_data: Vec<Relocation> = Vec::new();
         if let Some(symtab_index) = sec_indices.get(".symtab") {
             let symtab_sh = shtab[*symtab_index];
-            assert_eq!(symtab_sh.sh_type, SHT_SYMTAB);
-            let strtab_index = sec_indices.get(".strtab").expect("no .strtab section");
-            assert_eq!(symtab_sh.sh_link, *strtab_index as Word);
-            assert_eq!(symtab_sh.sh_entsize, size_of::<Sym>() as Word);
+            check_eq!(symtab_sh.sh_type, SHT_SYMTAB, ".symtab is not SHT_SYMTAB type");
+            let strtab_index = match sec_indices.get(".strtab") {
+                Some(index) => index,
+                None => return Err("no .strtab section".to_string()),
+            };
+            check_eq!(symtab_sh.sh_link, *strtab_index as Word, ".symtab does not link .strtab");
+            check_eq!(symtab_sh.sh_entsize, size_of::<Sym>() as Word, ".symtab entry size error");
+            if symtab_sh.sh_size as usize % size_of::<Sym>() != 0 {
+                return Err(".symtab size error".to_string());
+            }
             let symtab_raw: Vec<u8> = read_bytes(input, symtab_sh.sh_offset as u64, symtab_sh.sh_size as usize);
             let symtab_raw: &[Sym] = unsafe { deserialize_slice(&symtab_raw).unwrap() };
             // .strtab
             let strtab_sh = shtab[*strtab_index];
-            assert_eq!(strtab_sh.sh_type, SHT_STRTAB);
+            check_eq!(strtab_sh.sh_type, SHT_STRTAB, ".strtab is not SHT_STRTAB type");
             let strtab: Vec<u8> = read_bytes(input, strtab_sh.sh_offset as u64, strtab_sh.sh_size as usize);
             // .symtab
             let text_index = sec_indices.get(".text").copied();
             let data_index = sec_indices.get(".data").copied();
             let bss_index = sec_indices.get(".bss").copied();
             for sym in &symtab_raw[1..] { // 0 为 undef, 忽略
-                let name = str_in_table(&strtab, sym.st_name as usize).expect("can't find symbol name");
+                let name = match str_in_table(&strtab, sym.st_name as usize) {
+                    Some(str) => str,
+                    None => return Err("symbol in .symtab can't find name in .strtab".to_string()),
+                };
+
                 let bind = st_bind!(sym.st_info);
                 let st_type = st_type!(sym.st_info);
                 let is_global = match bind {
                     STB_LOCAL => false,
                     STB_GLOBAL => true,
-                    _ => panic!("unsupported st_bind"),
+                    _ => return Err(format!("unsupported st_bind: {}", bind)),
                 };
-                assert_eq!(st_type, STT_NOTYPE);
-                assert_eq!(sym.st_size, 0);
+                check_eq!(st_type, STT_NOTYPE, "symbol is not STT_NOTYPE type");
+                check_eq!(sym.st_size, 0, "symbol size is not 0");
                 let is_undef = sym.st_shndx == 0;
                 let section = if !is_undef {
                     if text_index == Some(sym.st_shndx as usize) {
@@ -120,36 +141,40 @@ impl Obj {
                         ProgramSection::Data
                     } else if bss_index == Some(sym.st_shndx as usize) {
                         ProgramSection::Bss
-                    }else {
-                        panic!("symbol {} in unsupported section", name);
+                    } else {
+                        return Err(format!("symbol {} in unsupported section", name));
                     }
                 } else {
                     ProgramSection::Undef
                 };
-                let index = symbol_map.insert(String::from(name), symbols.len());
-                if index.is_some() { // 存在重复符号
-                    return None;
+                if symbol_map.insert(String::from(name), symbols.len()).is_some() {
+                    return Err(format!("duplicate symbol {}", name));
                 }
                 symbols.push(Symbol::new(String::from(name), sym.st_value, section, is_global));
             }
             // .rel.text
             if let Some(rel_index) = sec_indices.get(".rel.text") {
                 let sh = shtab[*rel_index];
-                assert_eq!(sh.sh_type, SHT_REL);
-                assert_eq!(sh.sh_link as usize, *symtab_index);
-                assert_eq!(Some(sh.sh_info as usize), text_index);
-                assert_eq!(sh.sh_entsize, size_of::<Rel>() as Word);
+                check_eq!(sh.sh_type, SHT_REL, ".rel.text is not SHT_REL type");
+                check_eq!(sh.sh_link as usize, *symtab_index, ".rel.text does not link .symtab");
+                check_eq!(Some(sh.sh_info as usize), text_index, ".rel.text sh_info is not .text");
+                check_eq!(sh.sh_entsize, size_of::<Rel>() as Word, ".rel.text entry size error");
+                if sh.sh_size as usize % size_of::<Rel>() != 0 {
+                    return Err(".rel.text size error".to_string());
+                }
                 let raw = read_bytes(input, sh.sh_offset as u64, sh.sh_size as usize);
                 let raw: &[Rel] = unsafe { deserialize_slice(&raw).unwrap() };
                 for rel in raw {
                     let symbol = r_sym!(rel.r_info);
                     let r_type = r_type!(rel.r_info);
-                    assert_ne!(symbol, 0);
+                    if symbol == 0 {
+                        return Err("reference to symbol 0 in .rel.text".to_string());
+                    }
                     let symbol = symbols[symbol as usize - 1].name.clone(); // 减 1 是因为没有放 0
                     let is_relative = match r_type as u8 {
                         R_386_32 => false,
                         R_386_PC32 => true,
-                        _ => panic!("unsupported reloaction type"),
+                        _ => return Err("unsupported reloaction type".to_string()),
                     };
                     rel_text.push(Relocation::new(rel.r_offset, symbol, is_relative));
                 }
@@ -157,41 +182,44 @@ impl Obj {
             // .rel.data
             if let Some(rel_index) = sec_indices.get(".rel.data") {
                 let sh = shtab[*rel_index];
-                assert_eq!(sh.sh_type, SHT_REL);
-                assert_eq!(sh.sh_link as usize, *symtab_index);
-                assert_eq!(Some(sh.sh_info as usize), data_index);
-                assert_eq!(sh.sh_entsize, size_of::<Rel>() as Word);
+                check_eq!(sh.sh_type, SHT_REL, ".rel.data is not SHT_REL type");
+                check_eq!(sh.sh_link as usize, *symtab_index, ".rel.data does not link .symtab");
+                check_eq!(Some(sh.sh_info as usize), data_index, ".rel.data sh_info is not .data");
+                check_eq!(sh.sh_entsize, size_of::<Rel>() as Word, ".rel.data entry size error");
+                if sh.sh_size as usize % size_of::<Rel>() != 0 {
+                    return Err(".rel.data size error".to_string());
+                }
                 let raw = read_bytes(input, sh.sh_offset as u64, sh.sh_size as usize);
                 let raw: &[Rel] = unsafe { deserialize_slice(&raw).unwrap() };
                 for rel in raw {
                     let symbol = r_sym!(rel.r_info);
                     let r_type = r_type!(rel.r_info);
-                    assert_ne!(symbol, 0);
+                    if symbol == 0 {
+                        return Err("reference to symbol 0 in .rel.data".to_string());
+                    }
                     let symbol = symbols[symbol as usize - 1].name.clone(); // 减 1 是因为没有放 0
                     let is_relative = match r_type as u8 {
                         R_386_32 => false,
                         R_386_PC32 => true,
-                        _ => panic!("unsupported reloaction type"),
+                        _ => return Err("unsupported reloaction type".to_string()),
                     };
                     rel_data.push(Relocation::new(rel.r_offset, symbol, is_relative));
                 }
             }
         }
-        Some(
-            Self {
-                text,
-                data,
-                bss_size,
-                symbols,
-                rel_text,
-                rel_data,
-                symbol_map
-            }
-        )
+        Ok(Self {
+            text,
+            data,
+            bss_size,
+            symbols,
+            rel_text,
+            rel_data,
+            symbol_map
+        })
     }
 
     /// 链接多个目标文件
-    pub fn link(mut objs: Vec<Self>) -> Option<Self> {
+    pub fn link(mut objs: Vec<Self>) -> Result<Self, String> {
         // 每个 obj 的 .text, .data, .bss 起始地址在最终 obj 中对应 section 的偏移
         let mut offsets: Vec<(u32, u32, u32)> = Vec::with_capacity(objs.len());
         let mut size = (0u32, 0u32, 0u32); // .text, .data, .bss 大小
@@ -227,9 +255,8 @@ impl Obj {
                         ProgramSection::Bss => bss_off,
                         ProgramSection::Undef => 0, // can't be here
                     };
-                    let index = ret.symbol_map.insert(symbol.name.clone(), ret.symbols.len());
-                    if index.is_some() { // 存在重复符号
-                        return None;
+                    if ret.symbol_map.insert(symbol.name.clone(), ret.symbols.len()).is_some() { // 存在重复符号
+                        return Err(format!("duplicate symbol: {}", symbol.name));
                     }
                     ret.symbols.push(symbol);
                 }
@@ -247,20 +274,23 @@ impl Obj {
         }
         ret.handle_relocations(".text", text_base, data_base, bss_base)?;
         ret.handle_relocations(".data", text_base, data_base, bss_base)?;
-        Some(ret)
+        Ok(ret)
     }
 
     /// 处理所有非外部符号的重定位, 并在重定位表项中删除对应项
-    fn handle_relocations(&mut self, section: &str, text_addr: u32, data_addr: u32, bss_addr: u32) -> Option<()>  {
+    fn handle_relocations(&mut self, section: &str, text_addr: u32, data_addr: u32, bss_addr: u32) -> Result<(), String>  {
         let (sec, sec_rels, sec_addr) = match section {
             ".text" => (&mut self.text, &mut self.rel_text, text_addr),
             ".data" => (&mut self.data, &mut self.rel_data, data_addr),
-            _ => return None,
+            _ => return Err("unsupported relocation section".to_string()),
         };
         let mut extern_rels: Vec<Relocation> = Vec::new();
         for rel in sec_rels.iter() {
             // 符号的信息
-            let index = self.symbol_map.get(&rel.symbol)?; // 符号不存在返回 None
+            let index = match self.symbol_map.get(&rel.symbol) {
+                Some(index) => index,
+                None => return Err(format!("unknown symbol: {}", rel.symbol)),
+            };
             let symbol = &self.symbols[*index];
             let symbol_addr = match symbol.section {
                 ProgramSection::Text => text_addr + symbol.value,
@@ -276,7 +306,7 @@ impl Obj {
             let rel_addr = sec_addr + rel.offset;
             let index = rel.offset as usize;
             if index >= sec.len() || index + 3 >= sec.len() {
-                return None;
+                return Err("relocation is out of section".to_string());
             }
 
             // 计算重定位的值
@@ -298,7 +328,7 @@ impl Obj {
             sec[index + 3] = (value >> 24) as u8;
         }
         *sec_rels = extern_rels;
-        Some(())
+        Ok(())
     }
 }
 
@@ -318,12 +348,14 @@ fn read_bytes(file: &mut File, offset: u64, len: usize) -> Vec<u8> {
     content.resize(len, 0);
     file.seek(SeekFrom::Start(offset)).unwrap();
     let read_len = file.read(&mut content[..]).unwrap();
-    assert_eq!(read_len, len);
+    if read_len != len {
+        panic!("read {} bytes from file offset {} fail", len, offset);
+    }
     content
 }
 
-fn assert_header(header: &Ehdr) {
-    assert_eq!(
+fn check_header(header: &Ehdr) -> Result<(), String> {
+    check_eq!(
         header.e_ident,
         [
             ELFMAG0, ELFMAG1, ELFMAG2, ELFMAG3,
@@ -331,13 +363,15 @@ fn assert_header(header: &Ehdr) {
             ELFOSABI_NONE, 0,
             0, 0, 0, 0, 0, 0, 0
         ],
+        "not a valid ELF file"
     );
-    assert_eq!(header.e_type, ET_REL);
-    assert_eq!(header.e_machine, EM_386);
-    assert_eq!(header.e_version, EV_CURRENT);
-    assert_eq!(header.e_ehsize, size_of::<Ehdr>() as Half);
-    assert_eq!(header.e_shentsize, size_of::<Shdr>() as Half);
-    assert_eq!(header.e_phnum, 0);
+    check_eq!(header.e_type, ET_REL, "not a relocation file");
+    check_eq!(header.e_machine, EM_386, "not x86/i386 arch");
+    check_eq!(header.e_version, EV_CURRENT, "unsupported ELF version");
+    check_eq!(header.e_ehsize, size_of::<Ehdr>() as Half, "ELF Header size error");
+    check_eq!(header.e_shentsize, size_of::<Shdr>() as Half, "Section Header size error");
+    check_eq!(header.e_phnum, 0, "Program Header number is not 0");
+    Ok(())
 }
 
 unsafe fn deserialize<T: Sized>(src: &[u8]) -> Option<&T> {
