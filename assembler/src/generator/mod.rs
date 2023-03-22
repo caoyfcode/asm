@@ -2,8 +2,7 @@ mod table;
 mod data;
 mod instruction;
 
-use std::fs::File;
-use elf::{ElfWriter, ProgramSection, Symbol, Relocation};
+use elf::{ProgramSection, Symbol, Relocation};
 
 use crate::ast::{Node, Visitor, ProgramNode, ProgramItem, InstructionNode, LabelNode, PseudoSectionNode, PseudoGlobalNode, PseudoEquNode, PseudoFillNode, PseudoIntegerNode, PseudoStringNode, PseudoCommNode, ValueNode, OperandNode, RegisterNode, MemNode};
 use crate::common::{Size, Error};
@@ -115,23 +114,7 @@ impl Generator {
         }
     }
 
-    pub fn write_obj(&self, out: &mut File) -> Option<()> {
-        let (data_sec, data_rel) = self.generate_data_section();
-        let (text_sec, text_rel) = self.generate_text_section();
-        let bss_size = self.generate_bss_section_size();
-        let symbols = self.generate_symbol_table();
-
-        ElfWriter::new()
-            .text(text_sec)
-            .data(data_sec)
-            .bss_size(bss_size)
-            .symbols(symbols)
-            .rel_text(text_rel)
-            .rel_data(data_rel)
-            .write_obj(out)
-    }
-
-    fn generate_data_section(&self) -> (Vec<u8>, Vec<Relocation>) {
+    pub fn generate_data_section(&self) -> (Vec<u8>, Vec<Relocation>) {
         let mut section: Vec<u8> = Vec::new();
         let mut rel: Vec<Relocation> = Vec::new();
         for data in &self.data_section {
@@ -146,7 +129,7 @@ impl Generator {
         (section, rel)
     }
 
-    fn generate_text_section(&self) -> (Vec<u8>, Vec<Relocation>) {
+    pub fn generate_text_section(&self) -> (Vec<u8>, Vec<Relocation>) {
         let mut section: Vec<u8> = Vec::new();
         let mut rel: Vec<Relocation> = Vec::new();
         for code in &self.text_section {
@@ -162,7 +145,7 @@ impl Generator {
         (section, rel)
     }
 
-    fn generate_bss_section_size(&self) -> u32 {
+    pub fn generate_bss_section_size(&self) -> u32 {
         self.bss_section_size
     }
 
@@ -193,7 +176,7 @@ impl Generator {
         }
     }
 
-    fn generate_symbol_table(&self) -> Vec<Symbol> {
+    pub fn generate_symbol_table(&self) -> Vec<Symbol> {
         // 只留下不是 section 名的符号
         self.table
             .symbols()

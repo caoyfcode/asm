@@ -63,6 +63,41 @@ use std::{collections::HashMap, fs::File, mem::size_of, io::Write};
 
 use elf_h::*;
 
+#[derive(Debug)]
+pub enum ElfError {
+    DuplicateSymbol(String), // symbol name
+    MissingSymbol(String), // symbal name
+    WriteFileError(std::io::Error), // error message
+    ExecutableRelocation, // executable file should not have relocation sections
+}
+
+impl std::fmt::Display for ElfError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ElfError::DuplicateSymbol(symbol) => {
+                write!(f, "duplicate symbol \"{}\"", symbol)
+            },
+            ElfError::MissingSymbol(symbol) => {
+                write!(f, "missing symbol \"{}\"", symbol)
+            },
+            ElfError::WriteFileError(cause) => {
+                write!(f, "{}", cause)
+            },
+            ElfError::ExecutableRelocation => {
+                write!(f, "relocation section in executable file")
+            }
+        }
+    }
+}
+
+impl std::error::Error for ElfError {}
+
+impl From<std::io::Error> for ElfError {
+    fn from(value: std::io::Error) -> Self {
+        Self::WriteFileError(value)
+    }
+}
+
 pub struct ElfWriter {
     text: Vec<u8>,
     data: Vec<u8>,
@@ -134,7 +169,7 @@ impl ElfWriter {
         self
     }
 
-    pub fn write_obj(&self, out: &mut File) -> Option<()> {
+    pub fn write_obj(&self, out: &mut File) -> Result<(), ElfError> {
         // .shstrtab
         let shstrtab = StringTable::from(&[
             "", ".bss", ".shstrtab", ".symtab", ".strtab",
@@ -147,7 +182,7 @@ impl ElfWriter {
             let str = strtab.get_string(symtab[index].st_name as usize).unwrap(); // 必然成功
             let dup = map.insert(String::from(str), index);
             if dup.is_some() {
-                return None; // 符号重复
+                return Err(ElfError::DuplicateSymbol(String::from(str))); // 符号重复
             }
         }
         // .rel.text
@@ -307,33 +342,33 @@ impl ElfWriter {
 
         // write to file
         // ELF header
-        out.write_all(unsafe { serialize(&header) }).unwrap();
+        out.write_all(unsafe { serialize(&header) })?;
         // .text section
-        out.write_all(&self.text).unwrap();
+        out.write_all(&self.text)?;
         // .data section
-        out.write_all(&self.data).unwrap();
+        out.write_all(&self.data)?;
         // .shstrtab
-        out.write_all(shstrtab.content()).unwrap();
+        out.write_all(shstrtab.content())?;
         for _ in 0..sh_padding {
-            out.write_all(&[0]).unwrap();
+            out.write_all(&[0])?;
         }
         // section header table
-        out.write_all(unsafe { serialize_slice(&section_header_table) }).unwrap();
+        out.write_all(unsafe { serialize_slice(&section_header_table) })?;
         // .symtab
-        out.write_all(unsafe { serialize_slice(&symtab) }).unwrap();
+        out.write_all(unsafe { serialize_slice(&symtab) })?;
         // .strtab
-        out.write_all(strtab.content()).unwrap();
+        out.write_all(strtab.content())?;
         for _ in 0..rel_text_padding {
-            out.write_all(&[0]).unwrap();
+            out.write_all(&[0])?;
         }
         // .rel.text
-        out.write_all(unsafe { serialize_slice(&rel_text) }).unwrap();
+        out.write_all(unsafe { serialize_slice(&rel_text) })?;
         // .rel.data
-        out.write_all(unsafe { serialize_slice(&rel_data) }).unwrap();
-        Some(())
+        out.write_all(unsafe { serialize_slice(&rel_data) })?;
+        Ok(())
     }
 
-    pub fn write_exec(&mut self, out: &mut File) -> Option<()> {
+    pub fn write_exec(&mut self, out: &mut File) -> Result<(), ElfError> {
         // .shstrtab
         let shstrtab = StringTable::from(&[
             "", ".text", ".data", ".bss",
@@ -346,12 +381,12 @@ impl ElfWriter {
             let str = strtab.get_string(symtab[index].st_name as usize).unwrap(); // 必然成功
             let dup = map.insert(String::from(str), index);
             if dup.is_some() {
-                return None; // 符号重复
+                return Err(ElfError::DuplicateSymbol(String::from(str))); // 符号重复
             }
         }
         // 不支持重定位表
         if self.rel_text.len() != 0 || self.rel_data.len() != 0 {
-            return None;
+            return Err(ElfError::ExecutableRelocation);
         }
 
         // offsets
@@ -373,7 +408,10 @@ impl ElfWriter {
         let symtab_off = sh_off + 7 * size_of::<Shdr>(); // align = 4;
         let strtab_off = symtab_off + symtab.len() * size_of::<Sym>(); // align = 1
         // entry
-        let entry = map.get("_start").copied().expect("can't find _start");
+        let entry = match map.get("_start") {
+            Some(index) => *index,
+            None => return Err(ElfError::MissingSymbol(String::from("_start"))),
+        };
         let entry = symtab[entry];
         if entry.st_shndx != Self::TEXT_INDEX {
             panic!("_start is not in .text");
@@ -527,31 +565,31 @@ impl ElfWriter {
 
         // write to file
         // ELF header
-        out.write_all(unsafe { serialize(&header) }).unwrap();
+        out.write_all(unsafe { serialize(&header) })?;
         // program header table
-        out.write_all(unsafe { serialize_slice(&program_header_table) }).unwrap();
+        out.write_all(unsafe { serialize_slice(&program_header_table) })?;
         for _ in 0..text_padding {
-            out.write_all(&[0]).unwrap();
+            out.write_all(&[0])?;
         }
         // .text
-        out.write_all(&self.text).unwrap();
+        out.write_all(&self.text)?;
         for _ in 0..data_padding {
-            out.write_all(&[0]).unwrap();
+            out.write_all(&[0])?;
         }
         // .data
-        out.write_all(&self.data).unwrap();
+        out.write_all(&self.data)?;
         // .shstrtab
-        out.write_all(shstrtab.content()).unwrap();
+        out.write_all(shstrtab.content())?;
         for _ in 0..sh_padding {
-            out.write_all(&[0]).unwrap();
+            out.write_all(&[0])?;
         }
         // section header table
-        out.write_all(unsafe { serialize_slice(&section_header_table) }).unwrap();
+        out.write_all(unsafe { serialize_slice(&section_header_table) })?;
         // .symtab
-        out.write_all(unsafe { serialize_slice(&symtab) }).unwrap();
+        out.write_all(unsafe { serialize_slice(&symtab) })?;
         // .strtab
-        out.write_all(strtab.content()).unwrap();
-        Some(())
+        out.write_all(strtab.content())?;
+        Ok(())
     }
 
     // 返回符号表, 字符串表, 以及最后一个 local 的 index + 1
@@ -610,10 +648,13 @@ impl ElfWriter {
         (local_symbols, string_table, local_len as u32)
     }
 
-    fn rel_section(rels: &Vec<Relocation>, map: &HashMap<String, usize>) -> Option<Vec<Rel>> {
+    fn rel_section(rels: &Vec<Relocation>, map: &HashMap<String, usize>) -> Result<Vec<Rel>, ElfError> {
         let mut ret: Vec<Rel> = Vec::with_capacity(rels.len());
         for rel in rels {
-            let symbol = map.get(&rel.symbol).copied()?;
+            let symbol = match map.get(&rel.symbol) {
+                Some(symbol) => *symbol,
+                None => return Err(ElfError::MissingSymbol(rel.symbol.clone())),
+            };
             let r_info: Word = if rel.is_relative {
                 r_info!(symbol, R_386_PC32)
             } else {
@@ -625,7 +666,7 @@ impl ElfWriter {
             };
             ret.push(rel);
         }
-        Some(ret)
+        Ok(ret)
     }
 
 }
