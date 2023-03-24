@@ -1,7 +1,7 @@
 use std::io::BufRead;
 
 use crate::common::{Size, Error};
-use crate::config;
+use crate::config::{info_of_register, info_of_mnemonic};
 use crate::ast::{Ast, ProgramNode, ProgramItem, InstructionNode, LabelNode, PseudoSectionNode, PseudoGlobalNode, PseudoEquNode, PseudoFillNode, PseudoIntegerNode, PseudoStringNode, PseudoCommNode, ValueNode, OperandNode, RegisterNode, MemNode};
 
 use self::scanner::{Scanner, TokenKind, Token};
@@ -75,33 +75,47 @@ impl<R: BufRead> Parser<R> {
             let line = self.lookahead().unwrap().line;
             match_token!(
                 self.lookahead().unwrap(), "pseudo or instruction or label",
-                TokenKind::DotSection => items.push(
-                    (ProgramItem::PseudoSection(self.pseudo_section()?), line)
-                ),
-                TokenKind::DotGlobal => items.push(
-                    (ProgramItem::PseudoGlobal(self.pseudo_global()?), line)
-                ),
-                TokenKind::DotEqu => items.push(
-                    (ProgramItem::PseudoEqu(self.pseudo_equ()?), line)
-                ),
-                TokenKind::DotFill => items.push(
-                    (ProgramItem::PseudoFill(self.pseudo_fill()?), line)
-                ),
-                TokenKind::DotByte | TokenKind::DotWord | TokenKind::DotLong => items.push(
-                    (ProgramItem::PseudoInteger(self.pseudo_integer()?), line)
-                ),
-                TokenKind::DotAscii | TokenKind::DotAsciz=> items.push(
-                    (ProgramItem::PseudoString(self.pseudo_string()?), line)
-                ),
-                TokenKind::DotComm | TokenKind::DotLcomm => items.push(
-                    (ProgramItem::PseudoComm(self.pseudo_comm()?), line)
-                ),
-                TokenKind::Mnemonic(_, _) => items.push(
-                    (ProgramItem::Instruction(self.instruction()?), line)
-                ),
-                TokenKind::Symbol(_) => {
-                    items.push((ProgramItem::Label(self.label()?), line));
+                TokenKind::Label(label) => { // label
+                    items.push((ProgramItem::Label(LabelNode { label: label.clone() }), line));
+                    self.next_token();
                     should_match_eol = false;
+                },
+                TokenKind::Symbol(name) => { // pseudo or instruction
+                    match name.as_str() {
+                        ".section" => items.push(
+                            (ProgramItem::PseudoSection(self.pseudo_section()?), line)
+                        ),
+                        ".global" | ".globl" => items.push(
+                            (ProgramItem::PseudoGlobal(self.pseudo_global()?), line)
+                        ),
+                        ".equ" | ".set" => items.push(
+                            (ProgramItem::PseudoEqu(self.pseudo_equ()?), line)
+                        ),
+                        ".fill" => items.push(
+                            (ProgramItem::PseudoFill(self.pseudo_fill()?), line)
+                        ),
+                        ".byte" => items.push(
+                            (ProgramItem::PseudoInteger(self.pseudo_integer(Size::Byte)?), line)
+                        ),
+                        ".word" | ".short" => items.push(
+                            (ProgramItem::PseudoInteger(self.pseudo_integer(Size::Word)?), line)
+                        ),
+                        ".long" | ".int" => items.push(
+                            (ProgramItem::PseudoInteger(self.pseudo_integer(Size::DoubleWord)?), line)
+                        ),
+                        ".ascii" => items.push(
+                            (ProgramItem::PseudoString(self.pseudo_string(false)?), line)
+                        ),
+                        ".asciz" | ".string" => items.push(
+                            (ProgramItem::PseudoString(self.pseudo_string(true)?), line)
+                        ),
+                        ".lcomm" => items.push(
+                            (ProgramItem::PseudoComm(self.pseudo_lcomm()?), line)
+                        ),
+                        _ => items.push(
+                            (ProgramItem::Instruction(self.instruction()?), line)
+                        ),
+                    }
                 },
                 TokenKind::Eol => (),
             )?;
@@ -171,13 +185,8 @@ impl<R: BufRead> Parser<R> {
         )
     }
 
-    fn pseudo_integer(&mut self) -> Result<PseudoIntegerNode> {
-        let size = match_token!(
-            self.next_token().unwrap(), "",
-            TokenKind::DotByte => Size::Byte,
-            TokenKind::DotWord => Size::Word,
-            TokenKind::DotLong => Size::DoubleWord,
-        )?;
+    fn pseudo_integer(&mut self, size: Size) -> Result<PseudoIntegerNode> {
+        self.next_token();
         let mut values = Vec::new();
         values.push(self.value()?);
         while self.lookahead().unwrap().kind == TokenKind::Comma {
@@ -187,12 +196,8 @@ impl<R: BufRead> Parser<R> {
         Ok(PseudoIntegerNode { size, values })
     }
 
-    fn pseudo_string(&mut self) -> Result<PseudoStringNode> {
-        let zero_end = match_token!(
-            self.next_token().unwrap(), "",
-            TokenKind::DotAscii => false,
-            TokenKind::DotAsciz => true,
-        )?;
+    fn pseudo_string(&mut self, zero_end: bool) -> Result<PseudoStringNode> {
+        self.next_token();
         let content = match_token!(
             self.next_token().unwrap(), "string",
             TokenKind::String(str) => str,
@@ -200,29 +205,35 @@ impl<R: BufRead> Parser<R> {
         Ok(PseudoStringNode { zero_end, content })
     }
 
-    fn pseudo_comm(&mut self) -> Result<PseudoCommNode> {
-        let is_local = match_token!(
-            self.next_token().unwrap(), "",
-            TokenKind::DotLcomm => true,
-            TokenKind::DotComm => false,
-        )?;
+    fn pseudo_lcomm(&mut self) -> Result<PseudoCommNode> {
+        self.next_token();
         let symbol = match_token!(
             self.next_token().unwrap(), "symbol",
             TokenKind::Symbol(symbol) => symbol,
         )?;
         match_token!(self.next_token().unwrap(), "\",\"", TokenKind::Comma)?;
         let length = self.value()?;
-        Ok(PseudoCommNode { is_local, symbol, length })
+        Ok(PseudoCommNode { is_local: true, symbol, length })
     }
 
     fn instruction(&mut self) -> Result<InstructionNode> {
-        let (mnemonic, operand_size) = match_token!(
-            self.next_token().unwrap(), "",
-            TokenKind::Mnemonic(mnemonic, operand_size) => (mnemonic, operand_size),
-        )?;
+       let (mnemonic, line) =  match self.next_token().unwrap() {
+            Token { kind, line, ..} => {
+                match kind {
+                    TokenKind::Symbol(mnemonic) => (mnemonic, line),
+                    _ => panic!("can't be here"), // 调用该函数前已经确定是 Symbol 了
+                }
+            }
+        };
+
+        let (mnemonic, operand_size, is_jump) = match info_of_mnemonic(&mnemonic) {
+            Some(info) => info,
+            None => return Err(Error::UnknownSymbol(line, mnemonic)),
+        };
+
         let mut operands = Vec::new();
 
-        if config::mnemonic_is_jump(&mnemonic) { // jump instruction
+        if is_jump { // jump instruction
             operands.push(self.jump_operand()?);
         } else if self.lookahead().unwrap().kind != TokenKind::Eol { // none-jump instruction has operand
             operands.push(self.none_jump_operand()?); // first operand
@@ -232,7 +243,7 @@ impl<R: BufRead> Parser<R> {
             }
         }
 
-        Ok(InstructionNode { mnemonic, operand_size, operands })
+        Ok(InstructionNode { mnemonic: String::from(mnemonic), operand_size, operands })
     }
 
     fn jump_operand(&mut self) -> Result<OperandNode> {
@@ -275,10 +286,16 @@ impl<R: BufRead> Parser<R> {
     }
 
     fn register(&mut self) -> Result<RegisterNode> {
-        match_token!(
+        let line = self.lookahead().unwrap().line;
+        let name = match_token! {
             self.next_token().unwrap(), "register",
-            TokenKind::Register(name) => RegisterNode { name }
-        )
+            TokenKind::Register(name) => name,
+        }?;
+        if info_of_register(&name).is_some() {
+            Ok(RegisterNode { name })
+        } else {
+            Err(Error::UnknownSymbol(line, name))
+        }
     }
 
     fn mem(&mut self) -> Result<MemNode> {
@@ -326,15 +343,6 @@ impl<R: BufRead> Parser<R> {
         match_token!(self.next_token().unwrap(), "\")\"", TokenKind::Rparen)?;
 
         Ok(MemNode { displacement, base, index_scale: Some((index, scale)) })
-    }
-
-    fn label(&mut self) -> Result<LabelNode> {
-        let label = match_token!(
-            self.next_token().unwrap(), "symbol",
-            TokenKind::Symbol(symbol) => symbol,
-        )?;
-        match_token!(self.next_token().unwrap(), "\":\"", TokenKind::Colon)?;
-        Ok(LabelNode { label })
     }
 }
 

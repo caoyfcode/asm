@@ -89,52 +89,7 @@ macro_rules! hash_set {
 }
 
 lazy_static! {
-    // 所有不带大小后缀的指令
-    static ref MNEMONICS_WITHOUT_SIZE: Vec<&'static str> = vec![
-        "ret", "nop",
-        "int", "int3", "int1", "into", "dec", "inc",
-        // jcc
-        "ja", "jae", "jb", "jbe", "je", "jg", "jge",
-        "jl", "jle", "jne", "jno", "jnp", "jns", "jo", "jp", "js",
-        "jc", "jna", "jnae", "jnb", "jnbe", "jnc", "jng", "jnge",
-        "jnl", "jnle", "jnz", "jpe", "jpo", "jz",
-    ];
-
-    // 所有可能带大小后缀的指令
-    static ref MNEMONICS_WITH_SIZE: Vec<&'static str> = vec![
-        "pusha", "pushf", "popa", "popf",
-        "pop", "push",
-        "mov", "add", "lea",
-        "jmp", "call",
-    ];
-
-    // 所有寄存器名
-    static ref REGISTERS: Vec<&'static str> = vec![
-        // 通用寄存器
-        "eax", "ax", "ah", "al",
-        "ebx", "bx", "bh", "bl",
-        "ecx", "cx", "ch", "cl",
-        "edx", "dx", "dh", "dl",
-        "esi", "si", "edi", "di",
-        "ebp", "bp", "esp", "sp",
-        // 段寄存器
-        "cs", "ds", "es", "fs", "gs", "ss",
-        // eflags
-        "eflags", "flags",
-        // eip
-        "eip", "ip",
-    ];
-
-    // 跳转指令(操作数语法与一般指令不同)的助记符
-    static ref JUMP_MNEMONICS: HashSet<&'static str> = hash_set![
-        "jmp", "call",
-        "ja", "jae", "jb", "jbe", "je", "jg", "jge",
-        "jl", "jle", "jne", "jno", "jnp", "jns", "jo", "jp", "js",
-        // alias
-        "jc", "jna", "jnae", "jnb", "jnbe", "jnc", "jng", "jnge",
-        "jnl", "jnle", "jnz", "jpe", "jpo", "jz",
-    ];
-
+    // 所有寄存器信息
     static ref REGISTER_INFOS: HashMap<&'static str, RegisterInfo> = hash_map! {
         // 通用寄存器, code 可以用于 modrm, sib 与 opcode+rd
         "eax" => RegisterInfo { code: 0, size: Size::DoubleWord, kind: RegisterKind::GeneralPurpose },
@@ -175,6 +130,7 @@ lazy_static! {
         "ip" => RegisterInfo { code: 0, size: Size::Word, kind: RegisterKind::Eip },
     };
 
+    // 所有指令信息
     static ref INSTRUCTION_INFOS: HashMap<&'static str, Vec<InstructionInfo>> = instruction_map! {
         // "mnemonic" => [ ( opcode, modrm_opcode, size, operand_encoding (, is_defalut)? ),* ]
         "nop" => [
@@ -391,26 +347,54 @@ lazy_static! {
         "jpo" => "jnp",
         "jz" => "je",
     };
+
+    // 跳转指令(操作数语法与一般指令不同)的助记符
+    static ref JUMP_MNEMONICS: HashSet<&'static str> = hash_set![
+        "jmp", "call",
+        "ja", "jae", "jb", "jbe", "je", "jg", "jge",
+        "jl", "jle", "jne", "jno", "jnp", "jns", "jo", "jp", "js",
+        // alias
+        "jc", "jna", "jnae", "jnb", "jnbe", "jnc", "jng", "jnge",
+        "jnl", "jnle", "jnz", "jpe", "jpo", "jz",
+    ];
+
+    // 不可以带大小后缀的指令助记符
+    static ref NO_SIZE_MNEMONICS: HashSet<&'static str> = hash_set![
+        "ret", "nop",
+        "int", "int3", "int1", "into", "dec", "inc",
+        // jcc
+        "ja", "jae", "jb", "jbe", "je", "jg", "jge",
+        "jl", "jle", "jne", "jno", "jnp", "jns", "jo", "jp", "js",
+        "jc", "jna", "jnae", "jnb", "jnbe", "jnc", "jng", "jnge",
+        "jnl", "jnle", "jnz", "jpe", "jpo", "jz",
+
+    ];
 }
 
-/// 返回所有不带 `b|w|l` 后缀的指令助记符
-pub fn mnemonics_without_size() -> &'static [&'static str] {
-    &MNEMONICS_WITHOUT_SIZE
-}
-
-/// 返回所有可能带 `b|w|l` 后缀的指令助记符
-pub fn mnemonics_with_size() -> &'static [&'static str] {
-    &MNEMONICS_WITH_SIZE
-}
-
-/// 返回所有寄存器名
-pub fn registers() -> &'static [&'static str] {
-    &REGISTERS
-}
-
-/// 判断助记符是否是跳转指令, 在语法分析时用来确定操作数的语法
-pub fn mnemonic_is_jump(mnemonic: &str) -> bool {
-    JUMP_MNEMONICS.contains(&mnemonic)
+/// 判断是否是合法的指令助记符, 合法则返回 (裸助记符, 大小后缀, 是否是跳转指令)
+pub fn info_of_mnemonic(mnemonic: &str) -> Option<(&str, Option<Size>, bool)> {
+    let (mnemonic, size) = if !infos_of_instruction(mnemonic).is_some() {
+        let len = mnemonic.len();
+        let size = match mnemonic.as_bytes()[len - 1] as char {
+            'b' => Size::Byte,
+            'w' => Size::Word,
+            'l' => Size::DoubleWord,
+            _ => return None,
+        };
+        let bare_mnemonic = &mnemonic[..len - 1];
+        if infos_of_instruction(bare_mnemonic).is_some() && !NO_SIZE_MNEMONICS.contains(bare_mnemonic) {
+            (bare_mnemonic, Some(size))
+        } else {
+            return None;
+        }
+    } else {
+        (mnemonic, None)
+    };
+    Some((
+        mnemonic,
+        size,
+        JUMP_MNEMONICS.contains(mnemonic)
+    ))
 }
 
 pub fn info_of_register(name: &str) -> Option<&'static RegisterInfo> {
@@ -425,15 +409,52 @@ pub fn infos_of_instruction(mnemonic: &str) -> Option<&'static Vec<InstructionIn
     INSTRUCTION_INFOS.get(mnemonic)
 }
 
+
 #[cfg(test)]
 mod tests {
-    use super::mnemonic_is_jump;
+    use super::*;
 
     #[test]
-    fn test_is_jump() {
-        assert!(mnemonic_is_jump("jmp"));
-        assert!(mnemonic_is_jump("call"));
-        assert!(mnemonic_is_jump("jne"));
-        assert!(!mnemonic_is_jump("mov"));
+    fn test_mnemonic_with_size() {
+        assert_eq!(
+            info_of_mnemonic("mov"),
+            Some(("mov", None, false))
+        );
+        assert_eq!(
+            info_of_mnemonic("movl"),
+            Some(("mov", Some(Size::DoubleWord), false))
+        );
+    }
+
+    #[test]
+    fn test_mnemonic_no_size() {
+        assert_eq!(
+            info_of_mnemonic("int"),
+            Some(("int", None, false))
+        );
+        assert_eq!(
+            info_of_mnemonic("intl"),
+            None
+        );
+    }
+
+    #[test]
+    fn test_mnemonic_jump() {
+        assert_eq!(
+            info_of_mnemonic("jmp"),
+            Some(("jmp", None, true))
+        );
+        assert_eq!(
+            info_of_mnemonic("je"),
+            Some(("je", None, true))
+        );
+    }
+
+    #[test]
+    fn test_mnemonic_invalid() {
+        assert_eq!(
+            info_of_mnemonic("hehehe"),
+            None
+        );
     }
 }
