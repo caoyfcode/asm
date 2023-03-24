@@ -2,7 +2,7 @@ use std::io::BufRead;
 
 use crate::common::{Size, Error};
 use crate::config::{info_of_register, info_of_mnemonic};
-use crate::ast::{Ast, ProgramNode, ProgramItem, InstructionNode, LabelNode, PseudoSectionNode, PseudoGlobalNode, PseudoEquNode, PseudoFillNode, PseudoIntegerNode, PseudoStringNode, PseudoCommNode, ValueNode, OperandNode, RegisterNode, MemNode};
+use crate::ast::{Ast, ProgramNode, ProgramItem, InstructionNode, LabelNode, PseudoSectionNode, PseudoGlobalNode, PseudoEquNode, PseudoFillNode, PseudoIntegerNode, PseudoStringNode, PseudoLcommNode, ValueNode, OperandNode, RegisterNode, MemNode};
 
 use self::scanner::{Scanner, TokenKind, Token};
 
@@ -110,7 +110,7 @@ impl<R: BufRead> Parser<R> {
                             (ProgramItem::PseudoString(self.pseudo_string(true)?), line)
                         ),
                         ".lcomm" => items.push(
-                            (ProgramItem::PseudoComm(self.pseudo_lcomm()?), line)
+                            (ProgramItem::PseudoLcomm(self.pseudo_lcomm()?), line)
                         ),
                         _ => items.push(
                             (ProgramItem::Instruction(self.instruction()?), line)
@@ -205,7 +205,7 @@ impl<R: BufRead> Parser<R> {
         Ok(PseudoStringNode { zero_end, content })
     }
 
-    fn pseudo_lcomm(&mut self) -> Result<PseudoCommNode> {
+    fn pseudo_lcomm(&mut self) -> Result<PseudoLcommNode> {
         self.next_token();
         let symbol = match_token!(
             self.next_token().unwrap(), "symbol",
@@ -213,7 +213,7 @@ impl<R: BufRead> Parser<R> {
         )?;
         match_token!(self.next_token().unwrap(), "\",\"", TokenKind::Comma)?;
         let length = self.value()?;
-        Ok(PseudoCommNode { is_local: true, symbol, length })
+        Ok(PseudoLcommNode { symbol, length })
     }
 
     fn instruction(&mut self) -> Result<InstructionNode> {

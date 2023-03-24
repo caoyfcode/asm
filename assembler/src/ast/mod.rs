@@ -16,7 +16,7 @@ pub trait Visitor {
     fn visit_value(&mut self, node: &ValueNode) -> Self::Return;
     fn visit_pseudo_integer(&mut self, node: &PseudoIntegerNode) -> Self::Return;
     fn visit_pseudo_string(&mut self, node: &PseudoStringNode) -> Self::Return;
-    fn visit_pseudo_comm(&mut self, node: &PseudoCommNode) -> Self::Return;
+    fn visit_pseudo_lcomm(&mut self, node: &PseudoLcommNode) -> Self::Return;
     fn visit_instruction(&mut self, node: &InstructionNode) -> Self::Return;
     fn visit_operand(&mut self, node: &OperandNode) -> Self::Return;
     fn visit_register(&mut self, node: &RegisterNode) -> Self::Return;
@@ -51,7 +51,7 @@ pub enum ProgramItem {
     PseudoFill(PseudoFillNode),
     PseudoInteger(PseudoIntegerNode),
     PseudoString(PseudoStringNode),
-    PseudoComm(PseudoCommNode),
+    PseudoLcomm(PseudoLcommNode),
     Instruction(InstructionNode),
     Label(LabelNode),
 }
@@ -90,8 +90,7 @@ pub struct PseudoStringNode {
     pub content: String,
 }
 
-pub struct PseudoCommNode {
-    pub is_local: bool,
+pub struct PseudoLcommNode {
     pub symbol: String,
     pub length: ValueNode,
 }
@@ -170,9 +169,9 @@ impl Node for PseudoStringNode {
     }
 }
 
-impl Node for PseudoCommNode {
+impl Node for PseudoLcommNode {
     fn accept<V: Visitor>(&self, visitor: &mut V) -> V::Return {
-        visitor.visit_pseudo_comm(self)
+        visitor.visit_pseudo_lcomm(self)
     }
 }
 

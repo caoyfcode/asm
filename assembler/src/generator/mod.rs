@@ -4,7 +4,7 @@ mod instruction;
 
 use elf::{ProgramSection, Symbol, Relocation};
 
-use crate::ast::{Node, Visitor, ProgramNode, ProgramItem, InstructionNode, LabelNode, PseudoSectionNode, PseudoGlobalNode, PseudoEquNode, PseudoFillNode, PseudoIntegerNode, PseudoStringNode, PseudoCommNode, ValueNode, OperandNode, RegisterNode, MemNode};
+use crate::ast::{Node, Visitor, ProgramNode, ProgramItem, InstructionNode, LabelNode, PseudoSectionNode, PseudoGlobalNode, PseudoEquNode, PseudoFillNode, PseudoIntegerNode, PseudoStringNode, PseudoLcommNode, ValueNode, OperandNode, RegisterNode, MemNode};
 use crate::common::{Size, Error};
 use crate::config::{self, OperandEncoding, RegisterKind, InstructionInfo, RegisterInfo};
 
@@ -220,7 +220,7 @@ impl Visitor for Generator {
                 ProgramItem::PseudoFill(node) => node.accept(self)?,
                 ProgramItem::PseudoInteger(node) => node.accept(self)?,
                 ProgramItem::PseudoString(node) => node.accept(self)?,
-                ProgramItem::PseudoComm(node) => node.accept(self)?,
+                ProgramItem::PseudoLcomm(node) => node.accept(self)?,
                 ProgramItem::Instruction(node) => node.accept(self)?,
                 ProgramItem::Label(node) => node.accept(self)?,
             }
@@ -318,10 +318,7 @@ impl Visitor for Generator {
         Ok(())
     }
 
-    fn visit_pseudo_comm(&mut self, node: &PseudoCommNode) -> Self::Return {
-        if !node.is_local {
-            return Err(Error::UnknownSymbol(self.line, String::from(".comm"))); // 暂不支持 .comm, 暂时先返回词法错误
-        }
+    fn visit_pseudo_lcomm(&mut self, node: &PseudoLcommNode) -> Self::Return {
         if self.current_section != Section::Bss {
             return Err(Error::NotInRightSection(self.line, Section::Bss.name().to_string()));
         }

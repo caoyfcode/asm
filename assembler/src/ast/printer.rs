@@ -44,7 +44,7 @@ impl Visitor for AstPrinter {
                 ProgramItem::PseudoFill(node) => node.accept(self),
                 ProgramItem::PseudoInteger(node) => node.accept(self),
                 ProgramItem::PseudoString(node) => node.accept(self),
-                ProgramItem::PseudoComm(node) => node.accept(self),
+                ProgramItem::PseudoLcomm(node) => node.accept(self),
                 ProgramItem::Instruction(node) => node.accept(self),
                 ProgramItem::Label(node) => node.accept(self),
             }
@@ -103,13 +103,9 @@ impl Visitor for AstPrinter {
         }
     }
 
-    fn visit_pseudo_comm(&mut self, node: &PseudoCommNode) {
+    fn visit_pseudo_lcomm(&mut self, node: &PseudoLcommNode) {
         self.write_indent();
-        let is_local = match node.is_local {
-            true => "local",
-            false => "none-local",
-        };
-        writeln!(self.buf, "{} comm: {}", is_local, node.symbol).unwrap();
+        writeln!(self.buf, "lcomm: {}", node.symbol).unwrap();
         self.inc_depth();
         node.length.accept(self);
         self.dec_depth();
@@ -247,9 +243,8 @@ mod tests {
                 (ProgramItem::PseudoSection(
                     PseudoSectionNode {symbol: String::from(".bss")}
                 ), 7),
-                (ProgramItem::PseudoComm(
-                    PseudoCommNode {
-                        is_local: true,
+                (ProgramItem::PseudoLcomm(
+                    PseudoLcommNode {
                         symbol: String::from("buf"),
                         length: ValueNode::Integer(8)
                     }
