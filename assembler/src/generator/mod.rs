@@ -218,6 +218,7 @@ impl Visitor for Generator {
                 ProgramItem::PseudoGlobal(node) => node.accept(self)?,
                 ProgramItem::PseudoEqu(node) => node.accept(self)?,
                 ProgramItem::PseudoFill(node) => node.accept(self)?,
+                ProgramItem::PseudoZero(node) => node.accept(self)?,
                 ProgramItem::PseudoInteger(node) => node.accept(self)?,
                 ProgramItem::PseudoString(node) => node.accept(self)?,
                 ProgramItem::PseudoLcomm(node) => node.accept(self)?,
@@ -289,6 +290,31 @@ impl Visitor for Generator {
         self.current_offset += data.length();
         self.data_section.push(data);
         Ok(())
+    }
+
+    fn visit_pseudo_zero(&mut self, node: &crate::ast::PseudoZeroNode) -> Self::Return {
+        match self.current_section {
+            Section::Data => {
+                let size = match self.value_of_node(&node.size, false) {
+                    Value::Integer(val) => val,
+                    Value::Symbol(name, _) => return Err(Error::UseWrongTypeSymbol(self.line, name, String::from("constant"))),
+                };
+                let data = Data::new_fill(size, 1, 0);
+                self.current_offset += data.length();
+                self.data_section.push(data);
+                Ok(())
+            },
+            Section::Bss => {
+                let size = match self.value_of_node(&node.size, false) {
+                    Value::Integer(val) => val,
+                    Value::Symbol(name, _) => return Err(Error::UseWrongTypeSymbol(self.line, name, String::from("constant"))),
+                };
+                self.bss_section_size += size;
+                self.current_offset += size;
+                Ok(())
+            },
+            Section::Text => Err(Error::NotInRightSection(self.line, ".data or .bss".to_string())),
+        }
     }
 
     fn visit_value(&mut self, _node: &ValueNode) -> Self::Return {
@@ -821,6 +847,8 @@ mod tests {
                 .string "Hello, world!"
             ones:
                 .fill 3, 3, 1
+            zeros:
+                .zero 10
             ptr:
                 .int extern_addr
             .section .text
@@ -876,6 +904,8 @@ mod tests {
                     ret
                 .section .bss
                     .lcomm value, 4
+                value2:
+                    .zero 10
             "#.trim()
         );
     }

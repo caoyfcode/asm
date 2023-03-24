@@ -2,7 +2,7 @@ use std::io::BufRead;
 
 use crate::common::{Size, Error};
 use crate::config::{info_of_register, info_of_mnemonic};
-use crate::ast::{Ast, ProgramNode, ProgramItem, InstructionNode, LabelNode, PseudoSectionNode, PseudoGlobalNode, PseudoEquNode, PseudoFillNode, PseudoIntegerNode, PseudoStringNode, PseudoLcommNode, ValueNode, OperandNode, RegisterNode, MemNode};
+use crate::ast::{Ast, ProgramNode, ProgramItem, InstructionNode, LabelNode, PseudoSectionNode, PseudoGlobalNode, PseudoEquNode, PseudoFillNode, PseudoIntegerNode, PseudoStringNode, PseudoLcommNode, ValueNode, OperandNode, RegisterNode, MemNode, PseudoZeroNode};
 
 use self::scanner::{Scanner, TokenKind, Token};
 
@@ -94,6 +94,9 @@ impl<R: BufRead> Parser<R> {
                         ".fill" => items.push(
                             (ProgramItem::PseudoFill(self.pseudo_fill()?), line)
                         ),
+                        ".zero" => items.push (
+                            (ProgramItem::PseudoZero(self.pseudo_zero()?), line)
+                        ),
                         ".byte" => items.push(
                             (ProgramItem::PseudoInteger(self.pseudo_integer(Size::Byte)?), line)
                         ),
@@ -177,6 +180,11 @@ impl<R: BufRead> Parser<R> {
             TokenKind::Integer(value) => ValueNode::Integer(value),
             TokenKind::Symbol(symbol) => ValueNode::Symbol(symbol),
         )
+    }
+
+    fn pseudo_zero(&mut self) -> Result<PseudoZeroNode> {
+        self.next_token();
+        Ok(PseudoZeroNode { size: self.value()? })
     }
 
     fn pseudo_integer(&mut self, size: Size) -> Result<PseudoIntegerNode> {
@@ -358,9 +366,12 @@ mod tests {
         hello: .string "Hello, World"
         num: .int 0xf0, 10, 'a'
         arr: .fill 5, 1, 3
+        zeros: .zero 6
         .equ haha, 0b1101
         .section .bss
         .lcomm buffer, 16
+        buffer2:
+            .zero 10
         "#.trim();
         let cursor = Cursor::new(code);
         let mut parser = Parser::new(cursor);

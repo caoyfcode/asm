@@ -42,6 +42,7 @@ impl Visitor for AstPrinter {
                 ProgramItem::PseudoGlobal(node) => node.accept(self),
                 ProgramItem::PseudoEqu(node) => node.accept(self),
                 ProgramItem::PseudoFill(node) => node.accept(self),
+                ProgramItem::PseudoZero(node) => node.accept(self),
                 ProgramItem::PseudoInteger(node) => node.accept(self),
                 ProgramItem::PseudoString(node) => node.accept(self),
                 ProgramItem::PseudoLcomm(node) => node.accept(self),
@@ -101,6 +102,15 @@ impl Visitor for AstPrinter {
             ValueNode::Integer(num) => writeln!(self.buf, "{}", num).unwrap(),
             ValueNode::Symbol(sym) => writeln!(self.buf, "{}", sym).unwrap(),
         }
+    }
+
+    fn visit_pseudo_zero(&mut self, node: &PseudoZeroNode) {
+        self.write_indent();
+        writeln!(self.buf, "fill:").unwrap();
+
+        self.inc_depth();
+        node.size.accept(self);
+        self.dec_depth();
     }
 
     fn visit_pseudo_integer(&mut self, node: &PseudoIntegerNode) {

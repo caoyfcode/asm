@@ -14,6 +14,7 @@ pub trait Visitor {
     fn visit_pseudo_equ(&mut self, node: &PseudoEquNode) -> Self::Return;
     fn visit_pseudo_fill(&mut self, node: &PseudoFillNode) -> Self::Return;
     fn visit_value(&mut self, node: &ValueNode) -> Self::Return;
+    fn visit_pseudo_zero(&mut self, node: &PseudoZeroNode) -> Self::Return;
     fn visit_pseudo_integer(&mut self, node: &PseudoIntegerNode) -> Self::Return;
     fn visit_pseudo_string(&mut self, node: &PseudoStringNode) -> Self::Return;
     fn visit_pseudo_lcomm(&mut self, node: &PseudoLcommNode) -> Self::Return;
@@ -49,6 +50,7 @@ pub enum ProgramItem {
     PseudoGlobal(PseudoGlobalNode),
     PseudoEqu(PseudoEquNode),
     PseudoFill(PseudoFillNode),
+    PseudoZero(PseudoZeroNode),
     PseudoInteger(PseudoIntegerNode),
     PseudoString(PseudoStringNode),
     PseudoLcomm(PseudoLcommNode),
@@ -78,6 +80,10 @@ pub struct PseudoFillNode {
 pub enum ValueNode {
     Integer(u32),
     Symbol(String),
+}
+
+pub struct PseudoZeroNode {
+    pub size: ValueNode,
 }
 
 pub struct PseudoIntegerNode {
@@ -154,6 +160,12 @@ impl Node for PseudoFillNode {
 impl Node for ValueNode {
     fn accept<V: Visitor>(&self, visitor: &mut V) -> V::Return {
         visitor.visit_value(self)
+    }
+}
+
+impl Node for PseudoZeroNode {
+    fn accept<V: Visitor>(&self, visitor: &mut V) -> V::Return {
+        visitor.visit_pseudo_zero(self)
     }
 }
 
