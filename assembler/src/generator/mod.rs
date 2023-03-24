@@ -270,14 +270,22 @@ impl Visitor for Generator {
         if self.current_section != Section::Data {
             return Err(Error::NotInRightSection(self.line, Section::Data.name().to_string()))
         }
-        if node.size > 4 {
-            println!("{}: warn: size is {} > 4, use as 4", self.line, node.size);
-        }
+        let repeat = match self.value_of_node(&node.repeat, false) {
+            Value::Integer(val) => val,
+            Value::Symbol(name, _) => return Err(Error::UseWrongTypeSymbol(self.line, name, String::from("constant"))),
+        };
+        let size = match self.value_of_node(&node.size, false) {
+            Value::Integer(val) => val,
+            Value::Symbol(name, _) => return Err(Error::UseWrongTypeSymbol(self.line, name, String::from("constant"))),
+        };
         let value = match self.value_of_node(&node.value, false) {
             Value::Integer(val) => val,
             Value::Symbol(name, _) => return Err(Error::UseWrongTypeSymbol(self.line, name, String::from("constant"))),
         };
-        let data = Data::new_fill(node.repeat, node.size, value);
+        if size > 4 {
+            println!("{}: warn: size is {} > 4, use as 4", self.line, size);
+        }
+        let data = Data::new_fill(repeat, size, value);
         self.current_offset += data.length();
         self.data_section.push(data);
         Ok(())

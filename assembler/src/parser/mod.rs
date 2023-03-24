@@ -162,15 +162,9 @@ impl<R: BufRead> Parser<R> {
 
     fn pseudo_fill(&mut self) -> Result<PseudoFillNode> {
         self.next_token();
-        let repeat = match_token!(
-            self.next_token().unwrap(), "integer",
-            TokenKind::Integer(value) => value,
-        )?;
+        let repeat = self.value()?;
         match_token!(self.next_token().unwrap(), "\",\"", TokenKind::Comma)?;
-        let size = match_token!(
-            self.next_token().unwrap(), "integer",
-            TokenKind::Integer(value) => value,
-        )?;
+        let size = self.value()?;
         match_token!(self.next_token().unwrap(), "\",\"", TokenKind::Comma)?;
         let value = self.value()?;
 

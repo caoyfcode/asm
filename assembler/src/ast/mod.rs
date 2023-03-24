@@ -70,8 +70,8 @@ pub struct PseudoEquNode {
 }
 
 pub struct PseudoFillNode {
-    pub repeat: u32,
-    pub size: u32,
+    pub repeat: ValueNode,
+    pub size: ValueNode,
     pub value: ValueNode,
 }
 

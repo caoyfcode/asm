@@ -69,9 +69,28 @@ impl Visitor for AstPrinter {
 
     fn visit_pseudo_fill(&mut self, node: &PseudoFillNode) {
         self.write_indent();
-        writeln!(self.buf, "fill: repeat {}, size {}", node.repeat, node.size).unwrap();
+        writeln!(self.buf, "fill:").unwrap();
+
+        self.inc_depth();
+
+        self.write_indent();
+        writeln!(self.buf, "repeat").unwrap();
+        self.inc_depth();
+        node.repeat.accept(self);
+        self.dec_depth();
+
+        self.write_indent();
+        writeln!(self.buf, "size").unwrap();
+        self.inc_depth();
+        node.size.accept(self);
+        self.dec_depth();
+
+        self.write_indent();
+        writeln!(self.buf, "value").unwrap();
         self.inc_depth();
         node.value.accept(self);
+        self.dec_depth();
+
         self.dec_depth();
     }
 
