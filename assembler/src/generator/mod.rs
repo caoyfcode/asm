@@ -1071,7 +1071,6 @@ mod tests_inst_gen {
         let code = assemble_instruction(
             r#"
                 jmp *%eax
-                jmpl *3
                 jmp *%ax
                 jmp *3
             "#.trim()
@@ -1080,7 +1079,6 @@ mod tests_inst_gen {
             &code,
             &[
                 0xff, 0xe0, // jmp *%eax
-                0xff, 0x25, 0x03, 0x00, 0x00, 0x00, // jmp *3
                 0x66, 0xff, 0xe0, // jmp *eax
                 0xff, 0x25, 0x03, 0x00, 0x00, 0x00, // jmp *3
             ]

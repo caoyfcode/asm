@@ -161,6 +161,71 @@ lazy_static! {
             (vec![0xc7], Some(0), Size::Word, OperandEncoding::ImmRm), // movw imm16, r/m16
             (vec![0xc7], Some(0), Size::DoubleWord, OperandEncoding::ImmRm), // movl imm32, r/m32
         ],
+        // cmovcc: cmov** r/m, r
+        "cmova" => [
+            (vec![0x0f, 0x47], None, Size::Word, OperandEncoding::RmReg),
+            (vec![0x0f, 0x47], None, Size::DoubleWord, OperandEncoding::RmReg),
+        ],
+        "cmovae" => [
+            (vec![0x0f, 0x43], None, Size::Word, OperandEncoding::RmReg),
+            (vec![0x0f, 0x43], None, Size::DoubleWord, OperandEncoding::RmReg),
+        ],
+        "cmovb" => [
+            (vec![0x0f, 0x42], None, Size::Word, OperandEncoding::RmReg),
+            (vec![0x0f, 0x42], None, Size::DoubleWord, OperandEncoding::RmReg),
+        ],
+        "cmovbe" => [
+            (vec![0x0f, 0x46], None, Size::Word, OperandEncoding::RmReg),
+            (vec![0x0f, 0x46], None, Size::DoubleWord, OperandEncoding::RmReg),
+        ],
+        "cmove" => [
+            (vec![0x0f, 0x44], None, Size::Word, OperandEncoding::RmReg),
+            (vec![0x0f, 0x44], None, Size::DoubleWord, OperandEncoding::RmReg),
+        ],
+        "cmovg" => [
+            (vec![0x0f, 0x4f], None, Size::Word, OperandEncoding::RmReg),
+            (vec![0x0f, 0x4f], None, Size::DoubleWord, OperandEncoding::RmReg),
+        ],
+        "cmovge" => [
+            (vec![0x0f, 0x4d], None, Size::Word, OperandEncoding::RmReg),
+            (vec![0x0f, 0x4d], None, Size::DoubleWord, OperandEncoding::RmReg),
+        ],
+        "cmovl" => [
+            (vec![0x0f, 0x4c], None, Size::Word, OperandEncoding::RmReg),
+            (vec![0x0f, 0x4c], None, Size::DoubleWord, OperandEncoding::RmReg),
+        ],
+        "cmovle" => [
+            (vec![0x0f, 0x4e], None, Size::Word, OperandEncoding::RmReg),
+            (vec![0x0f, 0x4e], None, Size::DoubleWord, OperandEncoding::RmReg),
+        ],
+        "cmovne" => [
+            (vec![0x0f, 0x45], None, Size::Word, OperandEncoding::RmReg),
+            (vec![0x0f, 0x45], None, Size::DoubleWord, OperandEncoding::RmReg),
+        ],
+        "cmovno" => [
+            (vec![0x0f, 0x41], None, Size::Word, OperandEncoding::RmReg),
+            (vec![0x0f, 0x41], None, Size::DoubleWord, OperandEncoding::RmReg),
+        ],
+        "cmovnp" => [
+            (vec![0x0f, 0x4b], None, Size::Word, OperandEncoding::RmReg),
+            (vec![0x0f, 0x4b], None, Size::DoubleWord, OperandEncoding::RmReg),
+        ],
+        "cmovns" => [
+            (vec![0x0f, 0x49], None, Size::Word, OperandEncoding::RmReg),
+            (vec![0x0f, 0x49], None, Size::DoubleWord, OperandEncoding::RmReg),
+        ],
+        "cmovo" => [
+            (vec![0x0f, 0x40], None, Size::Word, OperandEncoding::RmReg),
+            (vec![0x0f, 0x40], None, Size::DoubleWord, OperandEncoding::RmReg),
+        ],
+        "cmovp" => [
+            (vec![0x0f, 0x4a], None, Size::Word, OperandEncoding::RmReg),
+            (vec![0x0f, 0x4a], None, Size::DoubleWord, OperandEncoding::RmReg),
+        ],
+        "cmovs" => [
+            (vec![0x0f, 0x48], None, Size::Word, OperandEncoding::RmReg),
+            (vec![0x0f, 0x48], None, Size::DoubleWord, OperandEncoding::RmReg),
+        ],
         // -- Arithmetic Logical Instructions --
         "add" => [
             (vec![0x04], None, Size::Byte, OperandEncoding::ImmA), // addb imm8, %al
@@ -176,7 +241,162 @@ lazy_static! {
             (vec![0x03], None, Size::Word, OperandEncoding::RmReg), // addw r/m16, r16
             (vec![0x03], None, Size::DoubleWord, OperandEncoding::RmReg), // addl r/m32, r32
         ],
+        "adc" => [ // add with carry,
+            (vec![0x14], None, Size::Byte, OperandEncoding::ImmA),
+            (vec![0x15], None, Size::Word, OperandEncoding::ImmA),
+            (vec![0x05], None, Size::DoubleWord, OperandEncoding::ImmA),
+            (vec![0x80], Some(2), Size::Byte, OperandEncoding::ImmRm),
+            (vec![0x81], Some(2), Size::Word, OperandEncoding::ImmRm),
+            (vec![0x81], Some(2), Size::DoubleWord, OperandEncoding::ImmRm),
+            (vec![0x10], None, Size::Byte, OperandEncoding::RegRm),
+            (vec![0x11], None, Size::Word, OperandEncoding::RegRm),
+            (vec![0x11], None, Size::DoubleWord, OperandEncoding::RegRm),
+            (vec![0x12], None, Size::Byte, OperandEncoding::RmReg),
+            (vec![0x13], None, Size::Word, OperandEncoding::RmReg),
+            (vec![0x13], None, Size::DoubleWord, OperandEncoding::RmReg),
+        ],
+        "sub" => [
+            (vec![0x2c], None, Size::Byte, OperandEncoding::ImmA),
+            (vec![0x2d], None, Size::Word, OperandEncoding::ImmA),
+            (vec![0x2d], None, Size::DoubleWord, OperandEncoding::ImmA),
+            (vec![0x80], Some(5), Size::Byte, OperandEncoding::ImmRm),
+            (vec![0x81], Some(5), Size::Word, OperandEncoding::ImmRm),
+            (vec![0x81], Some(5), Size::DoubleWord, OperandEncoding::ImmRm),
+            (vec![0x28], None, Size::Byte, OperandEncoding::RegRm),
+            (vec![0x29], None, Size::Word, OperandEncoding::RegRm),
+            (vec![0x29], None, Size::DoubleWord, OperandEncoding::RegRm),
+            (vec![0x2a], None, Size::Byte, OperandEncoding::RmReg),
+            (vec![0x2b], None, Size::Word, OperandEncoding::RmReg),
+            (vec![0x2b], None, Size::DoubleWord, OperandEncoding::RmReg),
+        ],
+        "sbb" => [
+            (vec![0x1c], None, Size::Byte, OperandEncoding::ImmA),
+            (vec![0x1d], None, Size::Word, OperandEncoding::ImmA),
+            (vec![0x1d], None, Size::DoubleWord, OperandEncoding::ImmA),
+            (vec![0x80], Some(3), Size::Byte, OperandEncoding::ImmRm),
+            (vec![0x81], Some(3), Size::Word, OperandEncoding::ImmRm),
+            (vec![0x81], Some(3), Size::DoubleWord, OperandEncoding::ImmRm),
+            (vec![0x18], None, Size::Byte, OperandEncoding::RegRm),
+            (vec![0x19], None, Size::Word, OperandEncoding::RegRm),
+            (vec![0x19], None, Size::DoubleWord, OperandEncoding::RegRm),
+            (vec![0x1a], None, Size::Byte, OperandEncoding::RmReg),
+            (vec![0x1b], None, Size::Word, OperandEncoding::RmReg),
+            (vec![0x1b], None, Size::DoubleWord, OperandEncoding::RmReg),
+        ],
+        "dec" => [
+            (vec![0x48], None, Size::Word, OperandEncoding::Opcode), // dec r16
+            (vec![0x48], None, Size::DoubleWord, OperandEncoding::Opcode), // dec r32
+            (vec![0xfe], Some(1), Size::Byte, OperandEncoding::Rm), // decb r/m8
+            (vec![0xff], Some(1), Size::Word, OperandEncoding::Rm), // decw r/m16
+            (vec![0xff], Some(1), Size::DoubleWord, OperandEncoding::Rm), // decl r/m32
+        ],
+        "inc" => [
+            (vec![0x40], None, Size::Word, OperandEncoding::Opcode), // inc r16
+            (vec![0x40], None, Size::DoubleWord, OperandEncoding::Opcode), // inc r32
+            (vec![0xfe], Some(0), Size::Byte, OperandEncoding::Rm), // incb r/m8
+            (vec![0xff], Some(0), Size::Word, OperandEncoding::Rm), // incw r/m16
+            (vec![0xff], Some(0), Size::DoubleWord, OperandEncoding::Rm), // incl r/m32
+        ],
+        "and" => [
+            (vec![0x24], None, Size::Byte, OperandEncoding::ImmA), // andb imm8, %al
+            (vec![0x25], None, Size::Word, OperandEncoding::ImmA), // andw imm16, %ax
+            (vec![0x25], None, Size::DoubleWord, OperandEncoding::ImmA), // andl imm32, %eax
+            (vec![0x80], Some(4), Size::Byte, OperandEncoding::ImmRm), // andb imm8, r/m8
+            (vec![0x81], Some(4), Size::Word, OperandEncoding::ImmRm), // andw imm16, r/m16
+            (vec![0x81], Some(4), Size::DoubleWord, OperandEncoding::ImmRm), // andl imm32, r/m32
+            (vec![0x20], None, Size::Byte, OperandEncoding::RegRm), // andb r8, r/m8
+            (vec![0x21], None, Size::Word, OperandEncoding::RegRm), // andw r16, r/m16
+            (vec![0x21], None, Size::DoubleWord, OperandEncoding::RegRm), // andl r32, r/m32
+            (vec![0x22], None, Size::Byte, OperandEncoding::RmReg), // andb r/m8, r8
+            (vec![0x23], None, Size::Word, OperandEncoding::RmReg), // andw r/m16, r16
+            (vec![0x23], None, Size::DoubleWord, OperandEncoding::RmReg), // andl r/m32, r32
+        ],
+        "or" => [
+            (vec![0x0c], None, Size::Byte, OperandEncoding::ImmA),
+            (vec![0x0d], None, Size::Word, OperandEncoding::ImmA),
+            (vec![0x0d], None, Size::DoubleWord, OperandEncoding::ImmA),
+            (vec![0x80], Some(1), Size::Byte, OperandEncoding::ImmRm),
+            (vec![0x81], Some(1), Size::Word, OperandEncoding::ImmRm),
+            (vec![0x81], Some(1), Size::DoubleWord, OperandEncoding::ImmRm),
+            (vec![0x08], None, Size::Byte, OperandEncoding::RegRm),
+            (vec![0x09], None, Size::Word, OperandEncoding::RegRm),
+            (vec![0x09], None, Size::DoubleWord, OperandEncoding::RegRm),
+            (vec![0x0a], None, Size::Byte, OperandEncoding::RmReg),
+            (vec![0x0b], None, Size::Word, OperandEncoding::RmReg),
+            (vec![0x0b], None, Size::DoubleWord, OperandEncoding::RmReg),
+        ],
+        "not" => [
+            (vec![0xf6], Some(2), Size::Byte, OperandEncoding::Rm), // notb r/m8
+            (vec![0xf7], Some(2), Size::Word, OperandEncoding::Rm), // notw r/m16
+            (vec![0xf7], Some(2), Size::DoubleWord, OperandEncoding::Rm), // notl r/m32
+        ],
+        "xor" => [
+            (vec![0x34], None, Size::Byte, OperandEncoding::ImmA),
+            (vec![0x35], None, Size::Word, OperandEncoding::ImmA),
+            (vec![0x35], None, Size::DoubleWord, OperandEncoding::ImmA),
+            (vec![0x80], Some(6), Size::Byte, OperandEncoding::ImmRm),
+            (vec![0x81], Some(6), Size::Word, OperandEncoding::ImmRm),
+            (vec![0x81], Some(6), Size::DoubleWord, OperandEncoding::ImmRm),
+            (vec![0x30], None, Size::Byte, OperandEncoding::RegRm),
+            (vec![0x31], None, Size::Word, OperandEncoding::RegRm),
+            (vec![0x31], None, Size::DoubleWord, OperandEncoding::RegRm),
+            (vec![0x32], None, Size::Byte, OperandEncoding::RmReg),
+            (vec![0x33], None, Size::Word, OperandEncoding::RmReg),
+            (vec![0x33], None, Size::DoubleWord, OperandEncoding::RmReg),
+        ],
+        "neg" => [
+            (vec![0xf6], Some(3), Size::Byte, OperandEncoding::Rm), // negb r/m8
+            (vec![0xf7], Some(3), Size::Word, OperandEncoding::Rm), // negw r/m16
+            (vec![0xf7], Some(3), Size::DoubleWord, OperandEncoding::Rm), // negl r/m32
+        ],
+        "cmp" => [
+            (vec![0x3c], None, Size::Byte, OperandEncoding::ImmA),
+            (vec![0x3d], None, Size::Word, OperandEncoding::ImmA),
+            (vec![0x3d], None, Size::DoubleWord, OperandEncoding::ImmA),
+            (vec![0x80], Some(7), Size::Byte, OperandEncoding::ImmRm),
+            (vec![0x81], Some(7), Size::Word, OperandEncoding::ImmRm),
+            (vec![0x81], Some(7), Size::DoubleWord, OperandEncoding::ImmRm),
+            (vec![0x38], None, Size::Byte, OperandEncoding::RegRm),
+            (vec![0x39], None, Size::Word, OperandEncoding::RegRm),
+            (vec![0x39], None, Size::DoubleWord, OperandEncoding::RegRm),
+            (vec![0x3a], None, Size::Byte, OperandEncoding::RmReg),
+            (vec![0x3b], None, Size::Word, OperandEncoding::RmReg),
+            (vec![0x3b], None, Size::DoubleWord, OperandEncoding::RmReg),
+        ],
+        "test" => [
+            (vec![0xa8], None, Size::Byte, OperandEncoding::ImmA),
+            (vec![0xa9], None, Size::Word, OperandEncoding::ImmA),
+            (vec![0xa9], None, Size::DoubleWord, OperandEncoding::ImmA),
+            (vec![0xf6], Some(0), Size::Byte, OperandEncoding::ImmRm),
+            (vec![0xf7], Some(0), Size::Word, OperandEncoding::ImmRm),
+            (vec![0xf7], Some(0), Size::DoubleWord, OperandEncoding::ImmRm),
+            (vec![0x84], None, Size::Byte, OperandEncoding::RegRm),
+            (vec![0x85], None, Size::Word, OperandEncoding::RegRm),
+            (vec![0x85], None, Size::DoubleWord, OperandEncoding::RegRm),
+        ],
         // -- Multiply and Divide Instructions --
+        "div" => [ // unsigned divide
+            (vec![0xf6], Some(6), Size::Byte, OperandEncoding::Rm), // div r/m8; %ax / r/m8 -> %al ... %ah
+            (vec![0xf7], Some(6), Size::Word, OperandEncoding::Rm), // div r/m16; %dx:%ax / r/m16 -> %ax ... %dx
+            (vec![0xf7], Some(6), Size::DoubleWord, OperandEncoding::Rm), // div r/m32; %edx:%eax / r/m32 -> %eax ... %edx
+        ],
+        "idiv" => [ // signed divide
+            (vec![0xf6], Some(7), Size::Byte, OperandEncoding::Rm), // div r/m8; %ax / r/m8 -> %al ... %ah
+            (vec![0xf7], Some(7), Size::Word, OperandEncoding::Rm), // div r/m16; %dx:%ax / r/m16 -> %ax ... %dx
+            (vec![0xf7], Some(7), Size::DoubleWord, OperandEncoding::Rm), // div r/m32; %edx:%eax / r/m32 -> %eax ... %edx
+        ],
+        "mul" => [ // unsigned multiply
+            (vec![0xf6], Some(4), Size::Byte, OperandEncoding::Rm), // div r/m8; %ax <- %al * r/m8
+            (vec![0xf7], Some(4), Size::Word, OperandEncoding::Rm), // div r/m16; %dx:%ax <- %ax * r/m16
+            (vec![0xf7], Some(4), Size::DoubleWord, OperandEncoding::Rm), // div r/m32; %edx:%eax <- %eax * r/m32
+        ],
+        "imul" => [ // signed multiply
+            (vec![0xf6], Some(5), Size::Byte, OperandEncoding::Rm), // div r/m8; %ax <- %al * r/m8
+            (vec![0xf7], Some(5), Size::Word, OperandEncoding::Rm), // div r/m16; %dx:%ax <- %ax * r/m16
+            (vec![0xf7], Some(5), Size::DoubleWord, OperandEncoding::Rm), // div r/m32; %edx:%eax <- %eax * r/m32
+            (vec![0x0f, 0xaf], None, Size::Word, OperandEncoding::RmReg), // imulw r/m16, r16; r16 <- r16 * r/m16
+            (vec![0x0f, 0xaf], None, Size::DoubleWord, OperandEncoding::RmReg), // imulw r/m32, r32; r32 <- r32 * r/m32
+        ],
         // -- Procedure Call and Return Instructions --
         "ret" => [
             (vec![0xc3], None, Size::Byte, OperandEncoding::Zero, true), // ret
@@ -278,6 +498,18 @@ lazy_static! {
             (vec![0x0f, 0x88], None, Size::DoubleWord, OperandEncoding::Rel, true),
         ],
         // -- Conversion Instructions --
+        "cbtw" => [ // %ax <- sign-extend of %al, convert byte to word
+            (vec![0x98], None, Size::Word, OperandEncoding::Zero, true), // cbtw; // Size::Word 会加 0x66 前缀
+        ],
+        "cwtl" => [ // %eax <- sign-extend of %ax, word to long
+            (vec![0x98], None, Size::DoubleWord, OperandEncoding::Zero, true), // cbtw
+        ],
+        "cwtd" => [ // %dx:%ax <- sign-extend of %ax, word to double word
+            (vec![0x66, 0x99], None, Size::Word, OperandEncoding::Zero, true), // cwtd
+        ],
+        "cltd" => [ // %edx:%eax <- sign-extend of %eax, long to double long
+            (vec![0x99], None, Size::DoubleWord, OperandEncoding::Zero, true), // cltd
+        ],
         // -- Push and Pop Instructions --
         "pop" => [
             (vec![0x58], None, Size::Word, OperandEncoding::Opcode), // popw r16
@@ -323,8 +555,111 @@ lazy_static! {
         ],
         // -- Rotate Instructions --
         // -- Bit Instructions --
+        "bsf" => [ // bit scan forward
+            (vec![0x0f, 0xbc], None, Size::Word, OperandEncoding::RmReg), // bsf r/m16, r16
+            (vec![0x0f, 0xbc], None, Size::DoubleWord, OperandEncoding::RmReg), // bsf r/m32, r32
+        ],
+        "bsr" => [ // bit scan reverse
+            (vec![0x0f, 0xbd], None, Size::Word, OperandEncoding::RmReg), // bsr r/m16, r16
+            (vec![0x0f, 0xbd], None, Size::DoubleWord, OperandEncoding::RmReg), // bsr r/m32, r32
+        ],
+        "bt" => [ // bit test
+            (vec![0x0f, 0xa3], None, Size::Word, OperandEncoding::RmReg), // bt r/m16, r16
+            (vec![0x0f, 0xa3], None, Size::DoubleWord, OperandEncoding::RmReg), // bt r/m32, r32
+        ],
+        "btc" => [ // bit test and complement
+            (vec![0x0f, 0xbb], None, Size::Word, OperandEncoding::RmReg), // btc r/m16, r16
+            (vec![0x0f, 0xbb], None, Size::DoubleWord, OperandEncoding::RmReg), // btc r/m32, r32
+        ],
+        "btr" => [ // bit test and reset
+            (vec![0x0f, 0x83], None, Size::Word, OperandEncoding::RmReg), // btr r/m16, r16
+            (vec![0x0f, 0x83], None, Size::DoubleWord, OperandEncoding::RmReg), // btr r/m32, r32
+        ],
+        "bts" => [
+            (vec![0x0f, 0xab], None, Size::Word, OperandEncoding::RmReg), // bts r/m16, r16
+            (vec![0x0f, 0xab], None, Size::DoubleWord, OperandEncoding::RmReg), // bts r/m32, r32
+        ],
         // -- Byte Instructions --
+        "bswap" => [
+            (vec![0x0f, 0xc8], None, Size::DoubleWord, OperandEncoding::Opcode, true), // bswap r32
+        ],
+        // setcc: set** r/m8
+        "seta" => [
+            (vec![0x0f, 0x97], Some(0), Size::Byte ,OperandEncoding::Rm, true),
+        ],
+        "setae" => [
+            (vec![0x0f, 0x93], Some(0), Size::Byte ,OperandEncoding::Rm, true),
+        ],
+        "setb" => [
+            (vec![0x0f, 0x92], Some(0), Size::Byte ,OperandEncoding::Rm, true),
+        ],
+        "setbe" => [
+            (vec![0x0f, 0x96], Some(0), Size::Byte ,OperandEncoding::Rm, true),
+        ],
+        "sete" => [
+            (vec![0x0f, 0x94], Some(0), Size::Byte ,OperandEncoding::Rm, true),
+        ],
+        "setg" => [
+            (vec![0x0f, 0x9f], Some(0), Size::Byte ,OperandEncoding::Rm, true),
+        ],
+        "setge" => [
+            (vec![0x0f, 0x9d], Some(0), Size::Byte ,OperandEncoding::Rm, true),
+        ],
+        "setl" => [
+            (vec![0x0f, 0x9c], Some(0), Size::Byte ,OperandEncoding::Rm, true),
+        ],
+        "setle" => [
+            (vec![0x0f, 0x9e], Some(0), Size::Byte ,OperandEncoding::Rm, true),
+        ],
+        "setne" => [
+            (vec![0x0f, 0x95], Some(0), Size::Byte ,OperandEncoding::Rm, true),
+        ],
+        "setno" => [
+            (vec![0x0f, 0x91], Some(0), Size::Byte ,OperandEncoding::Rm, true),
+        ],
+        "setnp" => [
+            (vec![0x0f, 0x9b], Some(0), Size::Byte ,OperandEncoding::Rm, true),
+        ],
+        "setns" => [
+            (vec![0x0f, 0x99], Some(0), Size::Byte ,OperandEncoding::Rm, true),
+        ],
+        "seto" => [
+            (vec![0x0f, 0x90], Some(0), Size::Byte ,OperandEncoding::Rm, true),
+        ],
+        "setp" => [
+            (vec![0x0f, 0x9a], Some(0), Size::Byte ,OperandEncoding::Rm, true),
+        ],
+        "sets" => [
+            (vec![0x0f, 0x98], Some(0), Size::Byte ,OperandEncoding::Rm, true),
+        ],
         // -- Flag Instructions --
+        "clc" => [
+            (vec![0xf8], None, Size::Byte, OperandEncoding::Zero, true)
+        ],
+        "stc" => [
+            (vec![0xf9], None, Size::Byte, OperandEncoding::Zero, true)
+        ],
+        "cli" => [
+            (vec![0xfa], None, Size::Byte, OperandEncoding::Zero, true)
+        ],
+        "sti" => [
+            (vec![0xfb], None, Size::Byte, OperandEncoding::Zero, true)
+        ],
+        "cld" => [
+            (vec![0xfc], None, Size::Byte, OperandEncoding::Zero, true)
+        ],
+        "std" => [
+            (vec![0xfd], None, Size::Byte, OperandEncoding::Zero, true)
+        ],
+        "cmc" => [
+            (vec![0xf5], None, Size::Byte, OperandEncoding::Zero, true)
+        ],
+        "lahf" => [
+            (vec![0x9f], None, Size::Byte, OperandEncoding::Zero, true)
+        ],
+        "sahf" => [
+            (vec![0x9e], None, Size::Byte, OperandEncoding::Zero, true)
+        ],
         // -- Interrupt Instructions --
         "int" => [
             (vec![0xcd], None, Size::Byte, OperandEncoding::Imm(false), true), // int imm8
@@ -342,9 +677,28 @@ lazy_static! {
         "nop" => [
             (vec![0x90], None, Size::Byte, OperandEncoding::Zero, true), // nop
         ],
+        "cpuid" => [
+            (vec![0x0f, 0xa2], None, Size::Byte, OperandEncoding::Zero, true), // cpuid
+        ],
     };
 
     static ref INSTRUCTION_ALIAS: HashMap<&'static str, &'static str> = hash_map! {
+        // cmovcc
+        "cmovc" => "cmovb",
+        "cmovna" => "cmovbe",
+        "cmovnae" => "cmovb",
+        "cmovnb" => "cmovae",
+        "cmovnbe" => "cmova",
+        "cmovnc" => "cmovae",
+        "cmovng" => "cmovle",
+        "cmovnge" => "cmovl",
+        "cmovnl" => "cmovge",
+        "cmovnle" => "cmovg",
+        "cmovnz" => "cmovne",
+        "cmovpe" => "cmovp",
+        "cmovpo" => "cmovnp",
+        "cmovz" => "cmove",
+        // jcc
         "jc" => "jb",
         "jna" => "jbe",
         "jnae" => "jb",
@@ -359,6 +713,21 @@ lazy_static! {
         "jpe" => "jp",
         "jpo" => "jnp",
         "jz" => "je",
+        // setcc
+        "setc" => "setb",
+        "setna" => "setbe",
+        "setnae" => "setb",
+        "setnb" => "setae",
+        "setnbe" => "seta",
+        "setnc" => "setae",
+        "setng" => "setle",
+        "setnge" => "setl",
+        "setnl" => "setge",
+        "setnle" => "setg",
+        "setnz" => "setne",
+        "setpe" => "setp",
+        "setpo" => "setnp",
+        "setz" => "sete",
     };
 
     // 跳转指令(操作数语法与一般指令不同)的助记符
@@ -373,14 +742,23 @@ lazy_static! {
 
     // 不可以带大小后缀的指令助记符
     static ref NO_SIZE_MNEMONICS: HashSet<&'static str> = hash_set![
-        "ret", "nop",
-        "int", "int3", "int1", "into", "dec", "inc",
-        // jcc
-        "ja", "jae", "jb", "jbe", "je", "jg", "jge",
-        "jl", "jle", "jne", "jno", "jnp", "jns", "jo", "jp", "js",
-        "jc", "jna", "jnae", "jnb", "jnbe", "jnc", "jng", "jnge",
-        "jnl", "jnle", "jnz", "jpe", "jpo", "jz",
-
+        // return and call
+        "ret",
+         // jump
+         "jmp",
+         "ja", "jae", "jb", "jbe", "je", "jg", "jge",
+         "jl", "jle", "jne", "jno", "jnp", "jns", "jo", "jp", "js",
+         "jc", "jna", "jnae", "jnb", "jnbe", "jnc", "jng", "jnge",
+         "jnl", "jnle", "jnz", "jpe", "jpo", "jz",
+         // conversion
+        "cbtw", "cwtl", "cwtd", "cltd",
+        // flag
+        "clc", "stc", "cli", "sti", "cld", "std",
+        "cmc", "lahf", "sahf",
+        // interrupt
+        "int", "int3", "int1", "into",
+        // other
+        "nop", "cpuid"
     ];
 }
 
