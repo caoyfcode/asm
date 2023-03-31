@@ -416,7 +416,7 @@ impl ElfWriter {
         if entry.st_shndx != Self::TEXT_INDEX {
             panic!("_start is not in .text");
         };
-        let entry = text_addr + entry.st_value;
+        let entry = entry.st_value;
 
         // program header table
         let program_header_table: [Phdr; 3] = [

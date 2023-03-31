@@ -272,8 +272,18 @@ impl Obj {
                 ret.rel_data.push(rel);
             }
         }
+        // 目标文件转为可执行文件
         ret.handle_relocations(".text", text_base, data_base, bss_base)?;
         ret.handle_relocations(".data", text_base, data_base, bss_base)?;
+        for symbol in &mut ret.symbols {
+           let base = match symbol.section {
+                ProgramSection::Undef => 0, // 不会出现在这里
+                ProgramSection::Text => text_base,
+                ProgramSection::Data => data_base,
+                ProgramSection::Bss => bss_base,
+            };
+            symbol.value += base;
+        }
         Ok(ret)
     }
 
