@@ -678,6 +678,51 @@ impl Generator {
                         .build()
                 }
             },
+            OperandEncoding::RotateOne | OperandEncoding::RotateCl | OperandEncoding::RotateImm8 => {
+                if operands.len() != 2 || !operands[1].is_rm() {
+                    return None;
+                }
+                let mut builder = Instruction::builder()
+                    .opcode(&info.opcode)
+                    .modrm_reg_opcode(info.modrm_opcode.unwrap())
+                    .operand_size_override(info.operand_size == Size::Word);
+                if let OperandEncoding::RotateOne = info.operand_encoding {
+                    if !operands[0].is_imm() {
+                        return None;
+                    }
+                    let imm = self.get_imm_operand(&operands[0], false)?;
+                    match imm {
+                        Value::Integer(1) => (),
+                        _ => return None,
+                    }
+                } else if let OperandEncoding::RotateCl = info.operand_encoding {
+                    if !operands[0].is_register_of_name("cl") {
+                        return None;
+                    }
+                } else {
+                    if !operands[0].is_imm() {
+                        return None;
+                    }
+                    let imm = self.get_imm_operand(&operands[0], false)?;
+                    builder = builder.immediate(imm, Size::Byte);
+                }
+                if operands[1].is_greg() { // r
+                    let reg_info = operands[1].get_register_info().unwrap();
+                    if reg_info.size != info.operand_size {
+                        return None;
+                    }
+                    builder.modrm_rm_r(reg_info.code)
+                        .build()
+                } else { // m
+                    if size.is_none() && !info.is_default {
+                        return None;
+                    }
+                    let mem = self.get_mem_operand(&operands[1])?;
+                    builder.modrm_rm_m(mem.disp, mem.base, mem.index_scale)
+                        .segment_override(mem.seg)
+                        .build()
+                }
+            },
             OperandEncoding::ImmRmReg => {
                 if operands.len() != 3 || !operands[0].is_imm() || !operands[1].is_rm() || !operands[2].is_greg() {
                     return None;
@@ -1215,6 +1260,30 @@ mod tests_inst_gen {
             "movw (%eax), %es"
         );
         assert_eq!(&code, &[0x8e, 0x00]);
+    }
+
+    #[test]
+    fn test_rotate_one_rcl() {
+        let code = assemble_instruction(
+            "rcl $1, %eax"
+        );
+        assert_eq!(&code, &[0xd1, 0xd0]);
+    }
+
+    #[test]
+    fn test_rotate_cl_rcl() {
+        let code = assemble_instruction(
+            "rcl %cl, %eax"
+        );
+        assert_eq!(&code, &[0xd3, 0xd0]);
+    }
+
+    #[test]
+    fn test_rotate_imm_rcl() {
+        let code = assemble_instruction(
+            "rcl $2, %eax"
+        );
+        assert_eq!(&code, &[0xc1, 0xd0, 0x02]);
     }
 
     #[test]

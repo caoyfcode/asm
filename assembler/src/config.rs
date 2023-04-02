@@ -26,6 +26,9 @@ pub enum OperandEncoding {
     ImmA, // xxx imm, %al/%ax/%eax : <opcode> <imm>
     SregRm, // xxx Sreg, r/m(16|32) : <opcode> <modrm> (<sib>) (<disp>)
     RmSreg, // xxx r/m16, Sreg : <opcode> <modrm> (<sib>) (<disp>) : m16 时不用加 0x66 前缀
+    RotateOne, // xxx{bwl} $1, r/m : <opcode> <modrm> (<sib>) (<disp>) : 后缀表示 r/m 的大小
+    RotateCl, // xxx{bwl} %cl, r/m : <opcode> <modrm> (<sib>) (<disp>) : 后缀表示 r/m 的大小
+    RotateImm8, // xxx{bwl} imm8, r/m : <opcode> <modrm> (<sib>) (<disp>) <imm> : 后缀表示 r/m 的大小
     // 3 个操作数
     ImmRmReg, // imul(w/l) imm, r/m, reg: <opcode> <modrm> (<sib>) (<disp>) <imm>
 }
@@ -375,6 +378,39 @@ lazy_static! {
             (vec![0x85], None, Size::Word, OperandEncoding::RegRm),
             (vec![0x85], None, Size::DoubleWord, OperandEncoding::RegRm),
         ],
+        "sal" => [
+            (vec![0xd0], Some(4), Size::Byte, OperandEncoding::RotateOne), // sal $1, r/m8
+            (vec![0xd2], Some(4), Size::Byte, OperandEncoding::RotateCl), // sal %cl, r/m8
+            (vec![0xc0], Some(4), Size::Byte, OperandEncoding::RotateImm8), // sal imm8, r/m8
+            (vec![0xd1], Some(4), Size::Word, OperandEncoding::RotateOne),
+            (vec![0xd3], Some(4), Size::Word, OperandEncoding::RotateCl),
+            (vec![0xc1], Some(4), Size::Word, OperandEncoding::RotateImm8),
+            (vec![0xd1], Some(4), Size::DoubleWord, OperandEncoding::RotateOne),
+            (vec![0xd3], Some(4), Size::DoubleWord, OperandEncoding::RotateCl),
+            (vec![0xc1], Some(4), Size::DoubleWord, OperandEncoding::RotateImm8),
+        ],
+        "sar" => [
+            (vec![0xd0], Some(7), Size::Byte, OperandEncoding::RotateOne),
+            (vec![0xd2], Some(7), Size::Byte, OperandEncoding::RotateCl),
+            (vec![0xc0], Some(7), Size::Byte, OperandEncoding::RotateImm8),
+            (vec![0xd1], Some(7), Size::Word, OperandEncoding::RotateOne),
+            (vec![0xd3], Some(7), Size::Word, OperandEncoding::RotateCl),
+            (vec![0xc1], Some(7), Size::Word, OperandEncoding::RotateImm8),
+            (vec![0xd1], Some(7), Size::DoubleWord, OperandEncoding::RotateOne),
+            (vec![0xd3], Some(7), Size::DoubleWord, OperandEncoding::RotateCl),
+            (vec![0xc1], Some(7), Size::DoubleWord, OperandEncoding::RotateImm8),
+        ],
+        "shr" => [
+            (vec![0xd0], Some(5), Size::Byte, OperandEncoding::RotateOne),
+            (vec![0xd2], Some(5), Size::Byte, OperandEncoding::RotateCl),
+            (vec![0xc0], Some(5), Size::Byte, OperandEncoding::RotateImm8),
+            (vec![0xd1], Some(5), Size::Word, OperandEncoding::RotateOne),
+            (vec![0xd3], Some(5), Size::Word, OperandEncoding::RotateCl),
+            (vec![0xc1], Some(5), Size::Word, OperandEncoding::RotateImm8),
+            (vec![0xd1], Some(5), Size::DoubleWord, OperandEncoding::RotateOne),
+            (vec![0xd3], Some(5), Size::DoubleWord, OperandEncoding::RotateCl),
+            (vec![0xc1], Some(5), Size::DoubleWord, OperandEncoding::RotateImm8),
+        ],
         // -- Multiply and Divide Instructions --
         "div" => [ // unsigned divide
             (vec![0xf6], Some(6), Size::Byte, OperandEncoding::Rm), // div r/m8; %ax / r/m8 -> %al ... %ah
@@ -557,6 +593,50 @@ lazy_static! {
             (vec![0x9d], None, Size::DoubleWord, OperandEncoding::Zero, true), // popf/popfl
         ],
         // -- Rotate Instructions --
+        "rcl" => [
+            (vec![0xd0], Some(2), Size::Byte, OperandEncoding::RotateOne), // rcl $1, r/m8
+            (vec![0xd2], Some(2), Size::Byte, OperandEncoding::RotateCl), // rcl %cl, r/m8
+            (vec![0xc0], Some(2), Size::Byte, OperandEncoding::RotateImm8), // rcl imm8, r/m8
+            (vec![0xd1], Some(2), Size::Word, OperandEncoding::RotateOne), // rcl $1, r/m16
+            (vec![0xd3], Some(2), Size::Word, OperandEncoding::RotateCl), // rcl %cl, r/m16
+            (vec![0xc1], Some(2), Size::Word, OperandEncoding::RotateImm8), // rcl imm8, r/m16
+            (vec![0xd1], Some(2), Size::DoubleWord, OperandEncoding::RotateOne), // rcl $1, r/m32
+            (vec![0xd3], Some(2), Size::DoubleWord, OperandEncoding::RotateCl), // rcl %cl, r/m32
+            (vec![0xc1], Some(2), Size::DoubleWord, OperandEncoding::RotateImm8), // rcl imm8, r/m32
+        ],
+        "rcr" => [
+            (vec![0xd0], Some(3), Size::Byte, OperandEncoding::RotateOne),
+            (vec![0xd2], Some(3), Size::Byte, OperandEncoding::RotateCl),
+            (vec![0xc0], Some(3), Size::Byte, OperandEncoding::RotateImm8),
+            (vec![0xd1], Some(3), Size::Word, OperandEncoding::RotateOne),
+            (vec![0xd3], Some(3), Size::Word, OperandEncoding::RotateCl),
+            (vec![0xc1], Some(3), Size::Word, OperandEncoding::RotateImm8),
+            (vec![0xd1], Some(3), Size::DoubleWord, OperandEncoding::RotateOne),
+            (vec![0xd3], Some(3), Size::DoubleWord, OperandEncoding::RotateCl),
+            (vec![0xc1], Some(3), Size::DoubleWord, OperandEncoding::RotateImm8),
+        ],
+        "rol" => [
+            (vec![0xd0], Some(0), Size::Byte, OperandEncoding::RotateOne),
+            (vec![0xd2], Some(0), Size::Byte, OperandEncoding::RotateCl),
+            (vec![0xc0], Some(0), Size::Byte, OperandEncoding::RotateImm8),
+            (vec![0xd1], Some(0), Size::Word, OperandEncoding::RotateOne),
+            (vec![0xd3], Some(0), Size::Word, OperandEncoding::RotateCl),
+            (vec![0xc1], Some(0), Size::Word, OperandEncoding::RotateImm8),
+            (vec![0xd1], Some(0), Size::DoubleWord, OperandEncoding::RotateOne),
+            (vec![0xd3], Some(0), Size::DoubleWord, OperandEncoding::RotateCl),
+            (vec![0xc1], Some(0), Size::DoubleWord, OperandEncoding::RotateImm8),
+        ],
+        "ror" => [
+            (vec![0xd0], Some(1), Size::Byte, OperandEncoding::RotateOne),
+            (vec![0xd2], Some(1), Size::Byte, OperandEncoding::RotateCl),
+            (vec![0xc0], Some(1), Size::Byte, OperandEncoding::RotateImm8),
+            (vec![0xd1], Some(1), Size::Word, OperandEncoding::RotateOne),
+            (vec![0xd3], Some(1), Size::Word, OperandEncoding::RotateCl),
+            (vec![0xc1], Some(1), Size::Word, OperandEncoding::RotateImm8),
+            (vec![0xd1], Some(1), Size::DoubleWord, OperandEncoding::RotateOne),
+            (vec![0xd3], Some(1), Size::DoubleWord, OperandEncoding::RotateCl),
+            (vec![0xc1], Some(1), Size::DoubleWord, OperandEncoding::RotateImm8),
+        ],
         // -- Bit Instructions --
         "bsf" => [ // bit scan forward
             (vec![0x0f, 0xbc], None, Size::Word, OperandEncoding::RmReg), // bsf r/m16, r16
@@ -701,6 +781,8 @@ lazy_static! {
         "cmovpe" => "cmovp",
         "cmovpo" => "cmovnp",
         "cmovz" => "cmove",
+        // shift
+        "shl" => "sal",
         // jcc
         "jc" => "jb",
         "jna" => "jbe",
