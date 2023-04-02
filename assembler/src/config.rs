@@ -26,6 +26,8 @@ pub enum OperandEncoding {
     ImmA, // xxx imm, %al/%ax/%eax : <opcode> <imm>
     SregRm, // xxx Sreg, r/m(16|32) : <opcode> <modrm> (<sib>) (<disp>)
     RmSreg, // xxx r/m16, Sreg : <opcode> <modrm> (<sib>) (<disp>) : m16 时不用加 0x66 前缀
+    // 3 个操作数
+    ImmRmReg, // imul(w/l) imm, r/m, reg: <opcode> <modrm> (<sib>) (<disp>) <imm>
 }
 
 pub struct InstructionInfo {
@@ -394,7 +396,9 @@ lazy_static! {
             (vec![0xf7], Some(5), Size::Word, OperandEncoding::Rm), // div r/m16; %dx:%ax <- %ax * r/m16
             (vec![0xf7], Some(5), Size::DoubleWord, OperandEncoding::Rm), // div r/m32; %edx:%eax <- %eax * r/m32
             (vec![0x0f, 0xaf], None, Size::Word, OperandEncoding::RmReg), // imulw r/m16, r16; r16 <- r16 * r/m16
-            (vec![0x0f, 0xaf], None, Size::DoubleWord, OperandEncoding::RmReg), // imulw r/m32, r32; r32 <- r32 * r/m32
+            (vec![0x0f, 0xaf], None, Size::DoubleWord, OperandEncoding::RmReg), // imull r/m32, r32; r32 <- r32 * r/m32
+            (vec![0x69], None, Size::Word, OperandEncoding::ImmRmReg), // imulw imm16, r/m16, r16; r16 <- r/m16 * imm16
+            (vec![0x69], None, Size::DoubleWord, OperandEncoding::ImmRmReg), // imull imm32, r/m32, r32; r32 <- r/m32 * imm32
         ],
         // -- Procedure Call and Return Instructions --
         "ret" => [

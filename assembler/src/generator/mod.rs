@@ -678,6 +678,34 @@ impl Generator {
                         .build()
                 }
             },
+            OperandEncoding::ImmRmReg => {
+                if operands.len() != 3 || !operands[0].is_imm() || !operands[1].is_rm() || !operands[2].is_greg() {
+                    return None;
+                }
+                let reg_info = operands[2].get_register_info().unwrap();
+                if reg_info.size != info.operand_size {
+                    return None;
+                }
+                let imm = self.get_imm_operand(&operands[0], false)?;
+                let builder = Instruction::builder()
+                    .opcode(&info.opcode)
+                    .modrm_reg_opcode(reg_info.code)
+                    .immediate(imm, info.operand_size)
+                    .operand_size_override(info.operand_size == Size::Word);
+                if operands[1].is_greg() { // r
+                    let reg_info = operands[1].get_register_info().unwrap();
+                    if reg_info.size != info.operand_size {
+                        return None;
+                    }
+                    builder.modrm_rm_r(reg_info.code)
+                        .build()
+                } else { // m
+                    let mem = self.get_mem_operand(&operands[1])?;
+                    builder.modrm_rm_m(mem.disp, mem.base, mem.index_scale)
+                        .segment_override(mem.seg)
+                        .build()
+                }
+            }
         }
     }
 
@@ -1187,6 +1215,22 @@ mod tests_inst_gen {
             "movw (%eax), %es"
         );
         assert_eq!(&code, &[0x8e, 0x00]);
+    }
+
+    #[test]
+    fn test_imm_rm_reg_imul() {
+        let code = assemble_instruction(
+            "imul $2, %ebx, %eax"
+        );
+        assert_eq!(&code, &[0x69, 0xc3, 0x02, 0x00, 0x00, 0x00]);
+    }
+
+    #[test]
+    fn test_imm_rm_reg_imul16() {
+        let code = assemble_instruction(
+            "imul $4, %ax, %ax"
+        );
+        assert_eq!(&code, &[0x66, 0x69, 0xc0, 0x04, 0x00]);
     }
 
     // 以下为特殊指令的测试
