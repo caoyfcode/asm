@@ -489,22 +489,6 @@ impl Generator {
                         .build()
                 }
             },
-            OperandEncoding::Reg => {
-                if operands.len() != 1 || !operands[0].is_greg() {
-                    return None;
-                }
-                let reg_info = operands[0].get_register_info().unwrap();
-                if reg_info.size != info.operand_size {
-                    return None;
-                }
-                Instruction::builder()
-                    .opcode(&info.opcode)
-                    .modrm_reg_opcode(info.modrm_opcode.unwrap())
-                    .modrm_rm_r(reg_info.code)
-                    .operand_size_override(info.operand_size == Size::Word)
-                    .build()
-
-            },
             OperandEncoding::Imm(need_prefix) => {
                 if operands.len() != 1 || !operands[0].is_imm() {
                     return None;

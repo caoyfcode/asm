@@ -13,7 +13,6 @@ pub enum OperandEncoding {
     ImpliedSreg(&'static str), // pop/push Sreg : <opcode> : 不用加 0x66 前缀
     Rm, // xxx r/m : <opcode> <modrm> (<sib>) (<disp>) : bool 表示 m 时是否需要后缀
     Mem, // xxx m : <opcode> <modrm> (<sib>) (<disp>) : bool 表示 m 时是否需要后缀
-    Reg, // xxx reg : <opcode> <modrm> : 通用寄存器
     Imm(bool), // xxx imm : <opcode> <imm> : bool 表示 16 位操作数时是否需要加 0x66 前缀, 因为 ret imm16 就不需要
     Rel, // xxx label : <opcode> <imm> : 用于跳转指令, 未来可能添加 relaxation 功能
     // 2 个操作数 (src, dest)

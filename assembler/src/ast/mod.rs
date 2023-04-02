@@ -1,3 +1,4 @@
+#[cfg(test)]
 pub mod printer;
 
 use crate::common::Size;
