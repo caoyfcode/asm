@@ -723,6 +723,33 @@ impl Generator {
                         .build()
                 }
             },
+            OperandEncoding::XrmReg(rm_size) => {
+                if operands.len() != 2 || !operands[0].is_rm() || !operands[1].is_greg() {
+                    return None;
+                }
+                let reg_info = operands[1].get_register_info().unwrap();
+                if reg_info.size != info.operand_size{
+                    return None;
+                }
+                let builder = Instruction::builder()
+                    .opcode(&info.opcode)
+                    .modrm_reg_opcode(reg_info.code)
+                    .operand_size_override(info.operand_size == Size::Word); // 这里与其他格式不同
+                if operands[0].is_greg() { // r
+                    let reg_info = operands[0].get_register_info().unwrap();
+                    if reg_info.size != rm_size {
+                        return None;
+                    }
+                    builder.modrm_rm_r(reg_info.code)
+                        .build()
+                } else { // m
+                    // 由于 size 必然为 None, 且必为 default, 故不判断大小了
+                    let mem = self.get_mem_operand(&operands[0])?;
+                    builder.modrm_rm_m(mem.disp, mem.base, mem.index_scale)
+                        .segment_override(mem.seg)
+                        .build()
+                }
+            },
             OperandEncoding::ImmRmReg => {
                 if operands.len() != 3 || !operands[0].is_imm() || !operands[1].is_rm() || !operands[2].is_greg() {
                     return None;
@@ -1284,6 +1311,22 @@ mod tests_inst_gen {
             "rcl $2, %eax"
         );
         assert_eq!(&code, &[0xc1, 0xd0, 0x02]);
+    }
+
+    #[test]
+    fn test_xrm_reg_movsx_byte_word() {
+        let code = assemble_instruction(
+            "movsbw %al, %bx"
+        );
+        assert_eq!(&code, &[0x66, 0x0f, 0xbe, 0xd8]);
+    }
+
+    #[test]
+    fn test_xrm_reg_movzx_word_dword() {
+        let code = assemble_instruction(
+            "movzwl (%eax), %eax"
+        );
+        assert_eq!(&code, &[0x0f, 0xb7, 0x00]);
     }
 
     #[test]

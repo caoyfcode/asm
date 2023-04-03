@@ -11,8 +11,8 @@ pub enum OperandEncoding {
     // 1 个操作数
     Opcode, // xxx reg : <opcode+rd>
     ImpliedSreg(&'static str), // pop/push Sreg : <opcode> : 不用加 0x66 前缀
-    Rm, // xxx r/m : <opcode> <modrm> (<sib>) (<disp>) : bool 表示 m 时是否需要后缀
-    Mem, // xxx m : <opcode> <modrm> (<sib>) (<disp>) : bool 表示 m 时是否需要后缀
+    Rm, // xxx r/m : <opcode> <modrm> (<sib>) (<disp>)
+    Mem, // xxx m : <opcode> <modrm> (<sib>) (<disp>)
     Imm(bool), // xxx imm : <opcode> <imm> : bool 表示 16 位操作数时是否需要加 0x66 前缀, 因为 ret imm16 就不需要
     Rel, // xxx label : <opcode> <imm> : 用于跳转指令, 未来可能添加 relaxation 功能
     // 2 个操作数 (src, dest)
@@ -29,6 +29,7 @@ pub enum OperandEncoding {
     RotateOne, // xxx{bwl} $1, r/m : <opcode> <modrm> (<sib>) (<disp>) : 后缀表示 r/m 的大小
     RotateCl, // xxx{bwl} %cl, r/m : <opcode> <modrm> (<sib>) (<disp>) : 后缀表示 r/m 的大小
     RotateImm8, // xxx{bwl} imm8, r/m : <opcode> <modrm> (<sib>) (<disp>) <imm> : 后缀表示 r/m 的大小
+    XrmReg(Size), // movs/movz{bw|bl|wl} r/m[8|16], reg[16|32]: <opcode> <modrm> (<sib>) (<disp>) : 无后缀, Size 表示 r/m 大小, operand_size 表示 reg 大小
     // 3 个操作数
     ImmRmReg, // imul(w/l) imm, r/m, reg: <opcode> <modrm> (<sib>) (<disp>) <imm>
 }
@@ -164,6 +165,26 @@ lazy_static! {
             (vec![0xc6], Some(0), Size::Byte, OperandEncoding::ImmRm), // movb imm8, r/m8
             (vec![0xc7], Some(0), Size::Word, OperandEncoding::ImmRm), // movw imm16, r/m16
             (vec![0xc7], Some(0), Size::DoubleWord, OperandEncoding::ImmRm), // movl imm32, r/m32
+        ],
+        // movsx: move with sign-extend
+        "movsbw" => [
+            (vec![0x0f, 0xbe], None, Size::Word, OperandEncoding::XrmReg(Size::Byte), true), // movsbw r/m8, r16
+        ],
+        "movsbl" => [
+            (vec![0x0f, 0xbe], None, Size::DoubleWord, OperandEncoding::XrmReg(Size::Byte), true), // movsbl r/m8, r32
+        ],
+        "movswl" => [
+            (vec![0x0f, 0xbf], None, Size::DoubleWord, OperandEncoding::XrmReg(Size::Word), true), // movswl r/m16, r32
+        ],
+        // movzx: move with zero-extend
+        "movzbw" => [
+            (vec![0x0f, 0xb6], None, Size::Word, OperandEncoding::XrmReg(Size::Byte), true), // movzbw r/m8, r16
+        ],
+        "movzbl" => [
+            (vec![0x0f, 0xb6], None, Size::DoubleWord, OperandEncoding::XrmReg(Size::Byte), true), // movzbl r/m8, r32
+        ],
+        "movzwl" => [
+            (vec![0x0f, 0xb7], None, Size::DoubleWord, OperandEncoding::XrmReg(Size::Word), true), // movzwl r/m16, r32
         ],
         // cmovcc: cmov** r/m, r
         "cmova" => [
@@ -827,6 +848,9 @@ lazy_static! {
 
     // 不可以带大小后缀的指令助记符
     static ref NO_SIZE_MNEMONICS: HashSet<&'static str> = hash_set![
+        // movsx, movzx
+        "movsbw", "movsbl", "movswl",
+        "movzbw", "movzbl", "movzwl",
         // return and call
         "ret",
          // jump
