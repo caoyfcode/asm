@@ -58,7 +58,12 @@ lazy_static! {
     ).unwrap();
 
     static ref INTEGER: Regex = Regex::new(
-        "(?P<bin>^0b[01]+)|(?P<hex>^0x[0-9a-f]+)|(?P<dec>^[1-9][0-9]*)|(?P<oct>^0[0-7]*)|(?P<char>^'[ -~]')"
+        r"(?x)  # ignore whitespace and allow line comments
+        (?P<bin>^0b[01]+)|
+        (?P<hex>^0x[0-9a-f]+)|
+        (?P<dec>^-?[1-9][0-9]*)|
+        (?P<oct>^0[0-7]*)|
+        (?P<char>^'[\ -~]')"
     ).unwrap();
 
     static ref STRING: Regex = Regex::new(
@@ -143,12 +148,22 @@ impl<R: BufRead> Scanner<R> {
             }
             if let Some(dec) = cap.name("dec") {
                 let end = dec.end();
-                return match u32::from_str_radix(&str[0..end], 10) {
-                    Ok(integer) => Some((TokenKind::Integer(integer), end)),
-                    Err(_) => Some(( // 有可能过大无法转换
-                        TokenKind::Err(Error::ParseIntFail(self.line, String::from(dec.as_str()))),
-                        end
-                    )),
+                return if str.starts_with("-") {
+                    match i32::from_str_radix(&str[0..end], 10) {
+                        Ok(integer) => Some((TokenKind::Integer(integer as u32), end)),
+                        Err(_) => Some(( // 有可能过大无法转换
+                            TokenKind::Err(Error::ParseIntFail(self.line, String::from(dec.as_str()))),
+                            end
+                        )),
+                    }
+                } else {
+                    match u32::from_str_radix(&str[0..end], 10) {
+                        Ok(integer) => Some((TokenKind::Integer(integer), end)),
+                        Err(_) => Some(( // 有可能过大无法转换
+                            TokenKind::Err(Error::ParseIntFail(self.line, String::from(dec.as_str()))),
+                            end
+                        )),
+                    }
                 };
             }
             if let Some(_) = cap.name("char") {
@@ -317,6 +332,22 @@ mod tests {
                 TokenKind::Symbol(String::from(".byte")), TokenKind::Integer(20),
                 TokenKind::Comma, TokenKind::Integer(22),
                 TokenKind::Comma, TokenKind::Integer('h' as u32), TokenKind::Eol,
+            ]
+        );
+    }
+
+    #[test]
+    fn test_negetive_integer() {
+        test_str_token_kinds(
+            r#".section .data ; data section
+                num:
+                    .int -1"#,
+            vec![
+                TokenKind::Symbol(String::from(".section")), TokenKind::Symbol(String::from(".data")), TokenKind::Eol,
+                TokenKind::Label(String::from("num")), TokenKind::Eol,
+                TokenKind::Symbol(String::from(".int")),
+                TokenKind::Integer(0xffff_ffff),
+                TokenKind::Eol,
             ]
         );
     }
