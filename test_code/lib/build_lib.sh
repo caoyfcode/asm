@@ -1,0 +1,1 @@
+/home/caoyf/code/rust/asm/target/debug/assembler -o lib.o lib.s

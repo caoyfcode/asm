@@ -958,3 +958,19 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod statistics {
+    use super::*;
+
+    #[test]
+    fn count_instructions() {
+        let mnemonic_count = INSTRUCTION_INFOS.len() + INSTRUCTION_ALIAS.len();
+        let mut instruction_count: usize = 0;
+        for (_, infos) in INSTRUCTION_INFOS.iter() {
+            instruction_count += infos.len();
+        }
+        println!("mnemonic count is {mnemonic_count}");
+        println!("instruction count is {instruction_count}");
+    }
+}

@@ -1,2 +1,14 @@
 /target
-/test_code
+
+/test_code/simple/*
+/test_code/complex/*
+/test_code/lib/*
+/test_code/link_glibc/*
+/test_code/link_multi/*
+/test_code/asm_err/*
+/test_code/mne_pseu_as_label/*
+/test_code/perf/*
+
+!/test_code/*/*.sh
+!/test_code/*/*.s
+!/test_code/*/Makefile
