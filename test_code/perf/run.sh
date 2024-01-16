@@ -1,7 +1,7 @@
 #!/bin/bash
 
-ASSEMBLER="/home/caoyf/code/rust/asm/target/debug/assembler"
-LINKER="/home/caoyf/code/rust/asm/target/debug/linker"
+ASSEMBLER="../../target/debug/assembler"
+LINKER="../../target/debug/linker"
 
 # 测量程序执行时间的次数
 NUM_RUNS=5

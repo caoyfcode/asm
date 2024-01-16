@@ -1,5 +1,5 @@
-AS=/home/caoyf/code/rust/asm/target/debug/assembler
-LD=/home/caoyf/code/rust/asm/target/debug/linker
+AS=../../target/debug/assembler
+LD=../../target/debug/linker
 sources=$(wildcard *.s)
 targets=$(patsubst %.s,%, $(sources))
 objects=$(patsubst %.s,%.o, $(sources))
